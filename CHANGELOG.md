@@ -1,5 +1,65 @@
 # Changelog
 
+## [2026-05-05] - 管道抽象层与跨平台完善
+
+### 管道与进程抽象 (pipe_handler)
+- 新增 `platform/pipe_handler.h` + `pipe_handler_posix.cc` + `pipe_handler_win32.cc`
+- 统一 pipe/fork/exec/wait 跨平台接口，消除 LSP/MCP 中的 `#ifndef _WIN32` 条件编译
+- `ForkAndExec()`：POSIX 用 fork+execvp，Windows 用 CreateProcess + 管道句柄转 fd
+- `CreatePipe/ClosePipe/ReadPipe/WritePipe/Dup2Pipe/WaitProcess/GetCurrentPid` 全平台抽象
+- `SetPipeNonBlocking/IsPipeWouldBlock/GetPipeErrorString` 统一错误处理
+
+### MCP Client 重构
+- `mcp_client.cc` 移除内联 POSIX pipe/fork/kill/wait 代码，全部改用 `platform::ForkAndExec/KillProcess/ClosePipe/ReadPipe/WritePipe`
+- 消除全部 `#ifndef _WIN32` / `#else` 块，净减 ~90 行
+
+### LSP Manager 重构
+- `lsp_manager.cc` 同样替换为 `platform::ForkAndExec/WritePipe/ReadPipe/ClosePipe`
+- 移除 POSIX 头文件依赖 (`unistd.h`, `sys/wait.h`)，净减 ~50 行
+
+### 平台层增强
+- `platform.cc/h` 新增：
+  - `NormalizePath()` — Windows MinGW 下 POSIX 路径 `/x/...` → `X:\...` 转换
+  - `PathExists()` — 带平台路径归一化的文件存在检查
+  - `SelectPlatformPath()` — 编译期跨平台路径选择（无需 `#ifdef`）
+  - `LaunchDetachedCommand()` — 分离后台进程启动
+  - `ExecuteScriptWithTimeout()` — 从 `subprocess_wrapper` 迁移而来
+- Windows: `SetConsoleUtf8()` 增加 ANSI/VT 转义序列支持；`GetSelfExePath()` 增加 Windows 实现
+- Windows: `LaunchProcess()`/`LaunchDetachedCommand()` 自动搜索 MinGW bin 目录加入 PATH，确保子进程能找到运行时 DLL
+
+### 本地模型管理优化
+- `local_model_manager.cc`：`LaunchProcess(args)` → `LaunchDetachedCommand(shell_cmd)`，使用 `ShellEscape` 防止路径注入
+- 健康检查改为等待模型真正加载完成（`/health` 返回 200 而非仅端口开放），超时失败自动 `Stop()`
+- 新增超时日志节流，每 10s 打印一次等待状态
+- `local_model_utils.cc`：移除 `ResolveModelPath()`（路径归一化统一由 `platform::NormalizePath` 处理）
+- 新增 `.exe` 搜索路径变体，新增 `build/` 和 `build_win/` 构建目录搜索
+
+### 配置更新
+- `LocalModelConfig` 新增 `model_path_for_win` 字段，跨平台双路径支持
+- `config.cc` 加载配置时自动调用 `SelectPlatformPath` + `NormalizePath`
+- `settings.json`：`model_path` 改为 `../llama_cpp_model/...`，新增 `model_path_for_win`，`auto_start: true`
+- 新增默认 OpenAI provider 配置条目
+
+### 构建系统
+- 顶层 `CMakeLists.txt`：Windows 编译定义 `_WIN32_WINNT=0x0A00`、`_USE_MATH_DEFINES`、`M_PI`
+- `main_src/CMakeLists.txt`：新增 pipe_handler 源文件平台过滤与选择
+- `Makefile`：移除 `run_llamacpp_server` 目标
+
+### subprocess_wrapper 移除
+- `subprocess_wrapper.cc/h` 删除，功能完整迁移至 `platform::ExecuteScriptWithTimeout`
+
+### 其他
+- `cpu_temperature_monitor/trigger.py` 修复退出码语义：正常不触发 → `exit(0)`，触发 → `exit(1)`
+- `images/demo.png`、`images/win_demo.png` 从 `docs/` 迁移至 `images/`
+
+### 文件统计
+- 变更文件：23 个
+- 新增：+782 行
+- 删除：-377 行
+- 净变化：+405 行
+
+---
+
 ## [2026-05-04] - 本地模型支持与平台抽象层
 
 ### 本地模型支持 (llama.cpp 集成)
