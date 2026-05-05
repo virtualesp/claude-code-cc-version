@@ -76,6 +76,9 @@ endif()
 list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/input_handler\\.cc$")
 list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/input_handler_posix\\.cc$")
 list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/input_handler_win32\\.cc$")
+list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/pipe_handler\\.cc$")
+list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/pipe_handler_posix\\.cc$")
+list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/pipe_handler_win32\\.cc$")
 
 # Add new input abstraction layer files
 list(APPEND CC_FILES_LIST
@@ -88,10 +91,12 @@ list(APPEND CC_FILES_LIST
 if(WIN32)
     list(APPEND CC_FILES_LIST
         ${CMAKE_CURRENT_LIST_DIR}/platform/input_handler_win32.cc
+        ${CMAKE_CURRENT_LIST_DIR}/platform/pipe_handler_win32.cc
     )
 else()
     list(APPEND CC_FILES_LIST
         ${CMAKE_CURRENT_LIST_DIR}/platform/input_handler_posix.cc
+        ${CMAKE_CURRENT_LIST_DIR}/platform/pipe_handler_posix.cc
     )
 endif()
 

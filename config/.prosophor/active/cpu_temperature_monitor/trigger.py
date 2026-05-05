@@ -85,10 +85,10 @@ if __name__ == "__main__":
 
     if temp is None:
         # 无法获取温度，不触发
-        sys.exit(1)
+        sys.exit(0)
 
     if temp > THRESHOLD:
         print(f"CPU 温度{temp:.1f}°C，超过阈值{THRESHOLD}°C")
-        sys.exit(0)  # 触发
+        sys.exit(1)  # 触发
     else:
-        sys.exit(1)  # 不触发
+        sys.exit(0)  # 不触发

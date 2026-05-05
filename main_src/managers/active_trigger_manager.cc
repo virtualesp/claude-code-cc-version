@@ -10,7 +10,7 @@
 #include "common/log_wrapper.h"
 #include "common/time_wrapper.h"
 #include "common/file_utils.h"
-#include "common/subprocess_wrapper.h"
+#include "platform/platform.h"
 
 namespace prosophor {
 
@@ -364,7 +364,7 @@ bool ActiveTriggerManager::ExecuteTrigger(const ActiveTriggerPlugin& plugin,
                                            std::string& trigger_reason) {
     std::string trigger_path = plugin.path + "/" + plugin.script;
 
-    auto result = ExecuteScriptWithTimeout(trigger_path, plugin.timeout);
+    auto result = platform::ExecuteScriptWithTimeout(trigger_path, plugin.timeout);
 
     if (result.timeout) {
         LOG_WARN("Trigger script timeout: {}", plugin.name);

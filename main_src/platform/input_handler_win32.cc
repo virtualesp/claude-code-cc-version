@@ -29,57 +29,6 @@ std::string WideToUtf8(const std::wstring& wide) {
     return result;
 }
 
-// Read a wide character from console, return UTF-8 string
-std::string ReadWideChar() {
-    INPUT_RECORD input_record;
-    DWORD events;
-    HANDLE h_input = GetStdHandle(STD_INPUT_HANDLE);
-
-    while (true) {
-        if (!ReadConsoleInputW(h_input, &input_record, 1, &events)) {
-            return "";
-        }
-
-        if (input_record.EventType == KEY_EVENT && input_record.Event.KeyEvent.bKeyDown) {
-            WORD vk = input_record.Event.KeyEvent.wVirtualKeyCode;
-            DWORD state = input_record.Event.KeyEvent.dwControlKeyState;
-
-            // Handle Ctrl+C
-            if ((state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) && vk == 'C') {
-                return std::string(1, 3);  // Ctrl+C
-            }
-
-            // Handle Ctrl+D (EOF)
-            if ((state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) && vk == 'D') {
-                return std::string(1, 4);  // Ctrl+D
-            }
-
-            // Get Unicode character from uChar.UnicodeChar
-            wchar_t wc = input_record.Event.KeyEvent.uChar.UnicodeChar;
-            if (wc != 0) {
-                // Convert wide char to UTF-8
-                std::wstring wide(1, wc);
-                return WideToUtf8(wide);
-            }
-
-            // Handle special keys - return empty string, caller should check virtual key
-            switch (vk) {
-                case VK_UP:    return "\x1b[A";   // Escape sequence for up arrow
-                case VK_DOWN:  return "\x1b[B";   // Down arrow
-                case VK_LEFT:  return "\x1b[D";   // Left arrow
-                case VK_RIGHT: return "\x1b[C";   // Right arrow
-                case VK_HOME:  return "\x1b[H";   // Home
-                case VK_END:   return "\x1b[F";   // End
-                case VK_DELETE: return "\x1b[3~"; // Delete
-                case VK_BACK:  return std::string(1, 127);  // Backspace
-                case VK_RETURN: return std::string(1, 13);  // Enter
-                case VK_ESCAPE: return std::string(1, 27);  // Escape
-                case VK_TAB:   return std::string(1, 9);    // Tab
-            }
-        }
-    }
-}
-
 }  // namespace
 
 namespace prosophor {
@@ -147,8 +96,6 @@ void InputHandler::DisableRawMode() {
 }
 
 int InputHandler::ReadChar() {
-    HANDLE h_input = GetStdHandle(STD_INPUT_HANDLE);
-
     while (true) {
         INPUT_RECORD input_record;
         DWORD events;

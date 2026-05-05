@@ -3,22 +3,13 @@
 
 #include "mcp/mcp_client.h"
 
-#include <cstdlib>
 #include <chrono>
 #include <thread>
-#include <array>
 #include <filesystem>
 
 #include "common/log_wrapper.h"
 #include "common/file_utils.h"
-
-#ifndef _WIN32
-#include <sys/wait.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <cerrno>
-#include <cstring>
-#endif
+#include "platform/platform.h"
 
 namespace prosophor {
 
@@ -56,71 +47,36 @@ bool McpClient::ConnectToServer(const McpServerConfig& config) {
     conn->type = config.type;
 
     if (config.type == "stdio") {
-#ifndef _WIN32
-        // Create pipes for stdin/stdout communication
-        int stdin_pipe[2], stdout_pipe[2];
-
-        if (pipe(stdin_pipe) == -1 || pipe(stdout_pipe) == -1) {
-            LOG_ERROR("Failed to create pipes for MCP server {}", config.name);
+        if (platform::kIsWindows) {
+            LOG_ERROR("stdio MCP servers not supported on Windows");
             return false;
         }
 
-        pid_t pid = fork();
-        if (pid == -1) {
-            LOG_ERROR("Failed to fork for MCP server {}", config.name);
-            close(stdin_pipe[0]); close(stdin_pipe[1]);
-            close(stdout_pipe[0]); close(stdout_pipe[1]);
+        // Build env vars for the child process
+        std::vector<std::string> env_vars;
+        if (!config.env.empty()) {
+            for (auto it = config.env.begin(); it != config.env.end(); ++it) {
+                env_vars.push_back(it.key() + "=" + it.value().get<std::string>());
+            }
+        }
+
+        auto proc = platform::ForkAndExec(config.command, config.args, "", env_vars);
+        if (proc.pid <= 0) {
+            LOG_ERROR("Failed to start MCP server {}", config.name);
             return false;
         }
 
-        if (pid == 0) {
-            // Child process
-            close(stdin_pipe[1]);
-            close(stdout_pipe[0]);
-
-            dup2(stdin_pipe[0], STDIN_FILENO);
-            dup2(stdout_pipe[1], STDOUT_FILENO);
-            dup2(stdout_pipe[1], STDERR_FILENO);
-
-            close(stdin_pipe[0]);
-            close(stdout_pipe[1]);
-
-            // Build argv
-            std::vector<char*> args;
-            args.push_back(const_cast<char*>(config.command.c_str()));
-            for (auto& arg : config.args) {
-                args.push_back(const_cast<char*>(arg.c_str()));
-            }
-            args.push_back(nullptr);
-
-            // Set environment variables
-            for (const auto& [key, value] : config.env.items()) {
-                std::string env_str = key + "=" + value.get<std::string>();
-                putenv(const_cast<char*>(env_str.c_str()));
-            }
-
-            execvp(config.command.c_str(), args.data());
-            _exit(127);
-        }
-
-        // Parent process
-        close(stdin_pipe[0]);
-        close(stdout_pipe[1]);
-
-        conn->process_handle = reinterpret_cast<void*>(static_cast<intptr_t>(pid));
-        conn->stdin_fd = stdin_pipe[1];   // Parent writes to stdin_pipe[1]
-        conn->stdout_fd = stdout_pipe[0]; // Parent reads from stdout_pipe[0]
+        conn->process_handle = reinterpret_cast<void*>(static_cast<intptr_t>(proc.pid));
+        conn->stdin_fd = proc.stdin_fd;
+        conn->stdout_fd = proc.stdout_fd;
         conn->type = "stdio";
 
-        // Set non-blocking mode for stdout
-        int flags = fcntl(conn->stdout_fd, F_GETFL, 0);
-        fcntl(conn->stdout_fd, F_SETFL, flags | O_NONBLOCK);
+        platform::SetPipeNonBlocking(conn->stdout_fd);
 
-        LOG_INFO("Started MCP server {} with PID {}", config.name, pid);
+        LOG_INFO("Started MCP server {} with PID {}", config.name, proc.pid);
 
         // Initialize the connection by listing tools
         try {
-            // Send initialize request
             nlohmann::json init_params = {
                 {"protocolVersion", "2024-11-05"},
                 {"capabilities", {{"tools", {}}, {"resources", {}}, {"prompts", {}}}},
@@ -130,10 +86,8 @@ bool McpClient::ConnectToServer(const McpServerConfig& config) {
             auto result = SendRequest(*conn, "initialize", init_params);
             LOG_INFO("MCP server {} initialized: {}", config.name, result.dump());
 
-            // Send initialized notification
             SendRequest(*conn, "notifications/initialized", nlohmann::json::object());
 
-            // List available tools
             try {
                 auto tools_result = SendRequest(*conn, "tools/list", nlohmann::json::object());
                 if (tools_result.contains("tools")) {
@@ -151,7 +105,6 @@ bool McpClient::ConnectToServer(const McpServerConfig& config) {
                 LOG_WARN("Failed to list tools from {}: {}", config.name, e.what());
             }
 
-            // List available resources
             try {
                 auto resources_result = SendRequest(*conn, "resources/list", nlohmann::json::object());
                 if (resources_result.contains("resources")) {
@@ -176,10 +129,6 @@ bool McpClient::ConnectToServer(const McpServerConfig& config) {
 
         servers_[config.name] = std::move(conn);
         return true;
-#else
-        LOG_ERROR("stdio MCP servers not supported on Windows");
-        return false;
-#endif
     } else if (config.type == "sse" || config.type == "websocket") {
         // SSE/WebSocket implementation would go here
         // For now, just log that it's not yet implemented
@@ -193,22 +142,14 @@ bool McpClient::ConnectToServer(const McpServerConfig& config) {
 void McpClient::DisconnectFromServer(const std::string& server_name) {
     auto it = servers_.find(server_name);
     if (it != servers_.end()) {
-#ifndef _WIN32
-        // Close file descriptors first
-        if (it->second->stdin_fd >= 0) {
-            close(it->second->stdin_fd);
-        }
-        if (it->second->stdout_fd >= 0) {
-            close(it->second->stdout_fd);
+        platform::ClosePipe(it->second->stdin_fd);
+        platform::ClosePipe(it->second->stdout_fd);
+
+        if (it->second->process_handle) {
+            int pid = static_cast<int>(reinterpret_cast<intptr_t>(it->second->process_handle));
+            platform::KillProcess(pid, false);
         }
 
-        // Then terminate the process
-        if (it->second->process_handle) {
-            pid_t pid = static_cast<pid_t>(reinterpret_cast<intptr_t>(it->second->process_handle));
-            kill(pid, SIGTERM);
-            waitpid(pid, nullptr, WNOHANG);
-        }
-#endif
         servers_.erase(it);
         LOG_INFO("Disconnected from MCP server: {}", server_name);
     }
@@ -288,22 +229,13 @@ nlohmann::json McpClient::ParseResponse(const std::string& response) {
 }
 
 std::string McpClient::ReadFromServer(ServerConnection& conn) {
-#ifndef _WIN32
-    pid_t pid = static_cast<pid_t>(reinterpret_cast<intptr_t>(conn.process_handle));
-    if (pid <= 0) {
-        throw std::runtime_error("Invalid process handle for server " + conn.name);
+    if (platform::kIsWindows) {
+        throw std::runtime_error("ReadFromServer not implemented on Windows");
     }
 
-    // Get stdout pipe fd from process (we closed the write end in parent)
-    // We need to read from the stdout_pipe[0] that was stored somewhere
-    // For now, use a simple approach: read from a file descriptor
-    // In production, you'd store the fd in ServerConnection
-
-    // Simple line-based reading with timeout
     std::string line;
     char buffer[4096];
 
-    // Use a timeout mechanism
     auto start = std::chrono::steady_clock::now();
     const auto timeout = std::chrono::seconds(30);
 
@@ -313,15 +245,13 @@ std::string McpClient::ReadFromServer(ServerConnection& conn) {
             throw std::runtime_error("Timeout reading from MCP server " + conn.name);
         }
 
-        ssize_t bytes_read = read(conn.stdout_fd, buffer, sizeof(buffer) - 1);
+        int bytes_read = platform::ReadPipe(conn.stdout_fd, buffer, sizeof(buffer) - 1);
         if (bytes_read > 0) {
             buffer[bytes_read] = '\0';
             line += buffer;
 
-            // Look for complete JSON response (ends with newline or complete object)
             if (line.find('\n') != std::string::npos ||
                 (line.find('{') != std::string::npos && line.rfind('}') != std::string::npos)) {
-                // Remove trailing newline
                 while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
                     line.pop_back();
                 }
@@ -331,41 +261,29 @@ std::string McpClient::ReadFromServer(ServerConnection& conn) {
                 }
             }
         } else if (bytes_read == 0) {
-            // EOF - server closed connection
             throw std::runtime_error("MCP server " + conn.name + " closed connection");
-        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // No data available yet, wait a bit
+        } else if (platform::IsPipeWouldBlock()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         } else {
-            throw std::runtime_error("Error reading from MCP server " + conn.name + ": " + strerror(errno));
+            throw std::runtime_error("Error reading from MCP server " + conn.name + ": " + platform::GetPipeErrorString());
         }
     }
-#else
-    throw std::runtime_error("ReadFromServer not implemented on Windows");
-#endif
 }
 
 void McpClient::WriteToServer(ServerConnection& conn, const std::string& data) {
-#ifndef _WIN32
-    pid_t pid = static_cast<pid_t>(reinterpret_cast<intptr_t>(conn.process_handle));
-    if (pid <= 0) {
-        throw std::runtime_error("Invalid process handle for server " + conn.name);
+    if (platform::kIsWindows) {
+        throw std::runtime_error("WriteToServer not implemented on Windows");
     }
 
     LOG_DEBUG("Writing to MCP server {}: {}", conn.name, data);
 
-    ssize_t bytes_written = write(conn.stdin_fd, data.c_str(), data.size());
+    int bytes_written = platform::WritePipe(conn.stdin_fd, data.c_str(), data.size());
     if (bytes_written < 0) {
-        throw std::runtime_error("Failed to write to MCP server " + conn.name + ": " + strerror(errno));
+        throw std::runtime_error("Failed to write to MCP server " + conn.name + ": " + platform::GetPipeErrorString());
     }
     if (static_cast<size_t>(bytes_written) < data.size()) {
         throw std::runtime_error("Incomplete write to MCP server " + conn.name);
     }
-#else
-    (void)conn;
-    (void)data;
-    throw std::runtime_error("WriteToServer not implemented on Windows");
-#endif
 }
 
 std::string McpClient::CallTool(const std::string& tool_name, const nlohmann::json& arguments) {

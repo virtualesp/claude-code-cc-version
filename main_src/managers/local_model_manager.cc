@@ -38,50 +38,42 @@ bool LocalModelManager::Start(const LocalModelConfig& config) {
         LOG_ERROR("llama-server binary not found. Use /setup to configure or set server_path in settings.json.");
         return false;
     }
-    if (!std::filesystem::exists(server_path)) {
+    if (!platform::PathExists(server_path)) {
         LOG_ERROR("llama-server not found at: {}", server_path);
         return false;
     }
-    std::string resolved_model = ResolveModelPath(config.model_path);
-    if (!std::filesystem::exists(resolved_model)) {
-        LOG_ERROR("Model file not found: {} (resolved: {})", config.model_path, resolved_model);
+    if (!platform::PathExists(config.model_path)) {
+        LOG_ERROR("Model file not found: {}", config.model_path);
         return false;
     }
 
-    LOG_INFO("Starting llama-server: {} -> {}:{}", server_path, resolved_model, config.port);
+    LOG_INFO("Starting llama-server: {} -> {}:{}", server_path, config.model_path, config.port);
 
-    std::vector<std::string> args;
-    args.push_back(server_path);
-    args.push_back("-m");
-    args.push_back(resolved_model);
-    args.push_back("--port");
-    args.push_back(std::to_string(config.port));
-    args.push_back("--host");
-    args.push_back("127.0.0.1");
+    std::ostringstream cmd;
+    cmd << platform::ShellEscape(server_path);
+    cmd << " -m " << platform::ShellEscape(config.model_path);
+    cmd << " --port " << config.port;
+    cmd << " --host 127.0.0.1";
 
     if (config.n_gpu_layers > 0) {
-        args.push_back("-ngl");
-        args.push_back(std::to_string(config.n_gpu_layers));
+        cmd << " -ngl " << config.n_gpu_layers;
     } else if (config.n_gpu_layers == -1) {
-        args.push_back("-ngl");
-        args.push_back("999");
+        cmd << " -ngl 999";
     }
 
     if (config.n_threads > 0) {
-        args.push_back("-t");
-        args.push_back(std::to_string(config.n_threads));
+        cmd << " -t " << config.n_threads;
     }
 
-    args.push_back("-c");
-    args.push_back("4096");
+    cmd << " -c 4096";
 
-    auto proc = platform::LaunchProcess(args);
-    if (proc.pid < 0) {
+    int pid = platform::LaunchDetachedCommand(cmd.str());
+    if (pid < 0) {
         LOG_ERROR("Failed to start llama-server");
         return false;
     }
 
-    pid_ = proc.pid;
+    pid_ = pid;
     config_ = config;
     running_.store(true);
 
@@ -91,12 +83,15 @@ bool LocalModelManager::Start(const LocalModelConfig& config) {
         return false;
     }
 
-    // Brief health check (non-blocking) — model may still be loading, service works once ready
-    if (!WaitForHealth(config.port, 5000)) {
-        LOG_DEBUG("llama-server port open, model loading in progress...");
+    // Wait for model to finish loading via /health (200 = ready, 503 = loading)
+    if (!WaitForHealth(config.port, config.start_timeout_ms)) {
+        LOG_ERROR("llama-server failed to become ready within {}ms (health endpoint)",
+                  config.start_timeout_ms);
+        Stop();
+        return false;
     }
 
-    LOG_INFO("llama-server started on port {} (PID: {})", config.port, pid_);
+    LOG_INFO("llama-server ready on port {} (PID: {}, model loaded)", config.port, pid_);
     return true;
 }
 
@@ -151,13 +146,19 @@ bool LocalModelManager::WaitForPort(int port, int timeout_ms) const {
 bool LocalModelManager::WaitForHealth(int port, int timeout_ms) const {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     std::string url = "http://127.0.0.1:" + std::to_string(port) + "/health";
+    int log_throttle = 0;
 
     while (std::chrono::steady_clock::now() < deadline) {
         // /health returns 503 while model loads, 200 when ready
         std::string result = platform::RunShellCommand(
             ("curl -s -o /dev/null -w \"%{http_code}\" " + url + " 2>/dev/null").c_str());
         if (result == "200") {
+            LOG_INFO("llama-server is ready");
             return true;
+        }
+        if (++log_throttle % 5 == 0) {
+            LOG_INFO("Waiting for model to finish loading (health={}, timeout={}ms)...",
+                     result, timeout_ms);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     }

@@ -4,16 +4,9 @@
 #include "services/lsp_manager.h"
 
 #include <sstream>
-#include <cstdlib>
 
 #include "common/log_wrapper.h"
 #include "platform/platform.h"
-
-// POSIX-only headers (unavailable on Windows, but LSP is disabled there at runtime)
-#ifndef _WIN32
-#include <unistd.h>
-#include <sys/wait.h>
-#endif
 
 namespace prosophor {
 
@@ -98,6 +91,7 @@ bool LspManager::StartServerForFile(const std::string& filepath) {
         LOG_WARN("LSP server management is not supported on Windows");
         return false;
     }
+
     auto* server = FindServerForFile(filepath);
     if (server) {
         return true;  // Already running
@@ -106,62 +100,31 @@ bool LspManager::StartServerForFile(const std::string& filepath) {
     // Find matching config
     for (auto& config : registered_configs_) {
         for (const auto& pattern : config.file_patterns) {
-            // Simple pattern matching
             if (filepath.size() >= pattern.size() - 1 &&
                 filepath.compare(filepath.size() - pattern.size() + 1,
                                  std::string::npos,
                                  pattern.substr(1)) == 0) {
-                // Start the server
+                // Start the server via platform abstraction
                 ServerInstance instance;
                 instance.config = config;
                 instance.root_path = config.root_path;
 
-                // Create pipes for communication
-                int stdin_pipe[2], stdout_pipe[2];
-                if (pipe(stdin_pipe) == -1 || pipe(stdout_pipe) == -1) {
-                    LOG_ERROR("Failed to create pipes for LSP server");
+                auto proc = platform::ForkAndExec(config.command, config.args);
+                if (proc.pid <= 0) {
+                    LOG_ERROR("Failed to start LSP server: {}", config.name);
                     return false;
                 }
 
-                pid_t pid = fork();
-                if (pid == 0) {
-                    // Child process
-                    close(stdin_pipe[1]);
-                    close(stdout_pipe[0]);
-                    dup2(stdin_pipe[0], STDIN_FILENO);
-                    dup2(stdout_pipe[1], STDOUT_FILENO);
-                    close(stdin_pipe[0]);
-                    close(stdout_pipe[1]);
+                instance.process = reinterpret_cast<void*>(static_cast<size_t>(proc.pid));
+                instance.stdin_fd = proc.stdin_fd;
+                instance.stdout_fd = proc.stdout_fd;
 
-                    // Execute server
-                    std::vector<char*> args;
-                    args.push_back(const_cast<char*>(config.command.c_str()));
-                    for (auto& arg : config.args) {
-                        args.push_back(const_cast<char*>(arg.c_str()));
-                    }
-                    args.push_back(nullptr);
+                servers_[config.name] = std::move(instance);
+                LOG_INFO("Started LSP server: {} (PID: {})", config.name, proc.pid);
 
-                    execvp(config.command.c_str(), args.data());
-                    _exit(1);
-                } else if (pid > 0) {
-                    // Parent process
-                    close(stdin_pipe[0]);
-                    close(stdout_pipe[1]);
-                    instance.process = reinterpret_cast<void*>(static_cast<size_t>(pid));
-                    instance.stdin_fd = stdin_pipe[1];
-                    instance.stdout_fd = stdout_pipe[0];
+                InitializeServer(servers_[config.name]);
 
-                    servers_[config.name] = std::move(instance);
-                    LOG_INFO("Started LSP server: {} (PID: {})", config.name, pid);
-
-                    // Initialize the server
-                    InitializeServer(servers_[config.name]);
-
-                    return true;
-                } else {
-                    LOG_ERROR("Failed to fork LSP server process");
-                    return false;
-                }
+                return true;
             }
         }
     }
@@ -219,8 +182,7 @@ nlohmann::json LspManager::SendRequest(ServerInstance& server,
     header << "Content-Length: " << body.size() << "\r\n\r\n";
 
     std::string message = header.str() + body;
-    ssize_t written = write(server.stdin_fd, message.c_str(), message.size());
-    (void)written;
+    platform::WritePipe(server.stdin_fd, message.c_str(), message.size());
 
     return ReadResponse(server);
 }
@@ -238,15 +200,14 @@ void LspManager::SendNotification(ServerInstance& server,
     header << "Content-Length: " << body.size() << "\r\n\r\n";
 
     std::string message = header.str() + body;
-    ssize_t written = write(server.stdin_fd, message.c_str(), message.size());
-    (void)written;
+    platform::WritePipe(server.stdin_fd, message.c_str(), message.size());
 }
 
 std::string LspManager::ReadResponse(ServerInstance& server) {
     char buffer[4096];
-    ssize_t n;
+    int n;
 
-    while ((n = read(server.stdout_fd, buffer, sizeof(buffer))) > 0) {
+    while ((n = platform::ReadPipe(server.stdout_fd, buffer, sizeof(buffer))) > 0) {
         server.read_buffer.append(buffer, n);
 
         // Look for Content-Length header
@@ -487,8 +448,8 @@ void LspManager::ShutdownAll() {
             platform::KillProcess(pid, false);
         }
 
-        if (server.stdin_fd > 0) close(server.stdin_fd);
-        if (server.stdout_fd > 0) close(server.stdout_fd);
+        platform::ClosePipe(server.stdin_fd);
+        platform::ClosePipe(server.stdout_fd);
     }
 
     servers_.clear();

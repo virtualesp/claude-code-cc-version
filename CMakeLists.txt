@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
+# Set Windows version to Windows 10 (required by cpp-httplib)
+# and math constants for MinGW
+if(WIN32)
+    add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00 _USE_MATH_DEFINES M_PI=3.14159265358979323846)
+endif()
+
 # Set default version if PACKAGE_VERSION not provided
 if(NOT DEFINED PACKAGE_VERSION)
     set(PACKAGE_VERSION "1.0.0")
@@ -61,9 +67,7 @@ endif()
 
 add_subdirectory(main_src)
 
-# if(NOT WIN32)
-#     add_subdirectory(tests)
-# endif()
+
 
 # Install configuration files, roles, skills, and workspace
 # Install to ~/.prosophor (home directory) on all platforms

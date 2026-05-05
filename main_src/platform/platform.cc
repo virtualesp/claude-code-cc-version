@@ -4,14 +4,18 @@
 #include "platform/platform.h"
 
 #include <chrono>
+#include <cctype>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <iostream>
 #include <thread>
 
 #ifdef _WIN32
+#include <io.h>
 #include <winsock2.h>
 #include <windows.h>
 #include <process.h>
@@ -143,6 +147,16 @@ void SetConsoleUtf8() {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+
+    // Enable ANSI/VT escape sequence processing (Windows 10+)
+    HANDLE h_out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (h_out != INVALID_HANDLE_VALUE) {
+        DWORD out_mode = 0;
+        if (GetConsoleMode(h_out, &out_mode)) {
+            out_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            SetConsoleMode(h_out, out_mode);
+        }
+    }
 #endif
 }
 
@@ -189,20 +203,68 @@ std::string ReadConsoleLine() {
 
 std::string GetSelfExePath() {
     std::string self_path;
-    char self_buf[4096];
 #ifdef __linux__
+    char self_buf[4096];
     ssize_t len = readlink("/proc/self/exe", self_buf, sizeof(self_buf) - 1);
     if (len > 0) {
         self_buf[len] = '\0';
         self_path = self_buf;
     }
 #elif defined(__APPLE__)
+    char self_buf[4096];
     uint32_t size = sizeof(self_buf);
     if (_NSGetExecutablePath(self_buf, &size) == 0) {
         self_path = self_buf;
     }
+#elif defined(_WIN32)
+    char self_buf[4096];
+    GetModuleFileNameA(nullptr, self_buf, sizeof(self_buf));
+    self_path = self_buf;
 #endif
     return self_path;
+}
+
+std::string NormalizePath(const std::string& path) {
+#ifdef _WIN32
+    // Step 1: Convert POSIX-style /x/... to Windows-native X:\... format.
+    // MinGW may supply paths like /e/ai_ws/... which GetFullPathNameA
+    // treats as relative (not starting with X:\) and prepends CWD.
+    std::string converted = path;
+    if (converted.size() >= 3 && converted[0] == '/'
+        && std::isalpha(static_cast<unsigned char>(converted[1]))
+        && converted[2] == '/') {
+        converted[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(converted[1])));
+        converted[1] = ':';
+    }
+
+    // Step 2: Use Windows API to resolve relative paths (containing .. etc.)
+    // to absolute. GetFullPathNameA uses the actual Windows CWD, not MSYS2's.
+    char full[MAX_PATH];
+    DWORD len = GetFullPathNameA(converted.c_str(), MAX_PATH, full, nullptr);
+    if (len > 0 && len < MAX_PATH) {
+        std::string result(full, len);
+        for (auto& c : result) {
+            if (c == '/') c = '\\';
+        }
+        return result;
+    }
+    return converted;
+#else
+    return path;
+#endif
+}
+
+bool PathExists(const std::string& path) {
+    return std::filesystem::exists(NormalizePath(path));
+}
+
+std::string SelectPlatformPath(const std::string& default_path, const std::string& win_path) {
+#ifdef _WIN32
+    return win_path.empty() ? default_path : win_path;
+#else
+    (void)win_path;
+    return default_path;
+#endif
 }
 
 bool CheckPortOpen(int port) {
@@ -247,21 +309,50 @@ Subprocess LaunchProcess(const std::vector<std::string>& args) {
         }
     }
 
-    SECURITY_ATTRIBUTES sa{ sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE };
     STARTUPINFOA si{};
     si.cb = sizeof(STARTUPINFOA);
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
     PROCESS_INFORMATION pi{};
 
-    if (!CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, TRUE,
+    // Prepend MinGW bin directory to PATH so child processes (llama-server)
+    // can find MinGW runtime DLLs at runtime.
+    char saved_path[32768] = {};
+    GetEnvironmentVariableA("PATH", saved_path, sizeof(saved_path));
+    bool found_mingw = false;
+
+    char module_path[MAX_PATH] = {};
+    if (GetModuleFileNameA(nullptr, module_path, sizeof(module_path))) {
+        auto p = std::filesystem::path(module_path).parent_path();
+        while (p.has_parent_path()) {
+            auto candidate = p / "mingw64" / "bin";
+            if (std::filesystem::exists(candidate)) {
+                SetEnvironmentVariableA("PATH", (candidate.string() + ";" + saved_path).c_str());
+                found_mingw = true;
+                break;
+            }
+            p = p.parent_path();
+        }
+    }
+    if (!found_mingw) {
+        char ml_buf[MAX_PATH] = {};
+        DWORD ml = GetEnvironmentVariableA("MINGW_PREFIX", ml_buf, sizeof(ml_buf));
+        if (ml > 0 && ml < MAX_PATH) {
+            SetEnvironmentVariableA("PATH", (std::string(ml_buf) + "/bin;" + saved_path).c_str());
+        }
+    }
+
+    if (!CreateProcessA(nullptr, cmd_line.data(), nullptr, nullptr, FALSE,
                         CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
-                        nullptr, nullptr, &si, &pi)) {
+                        nullptr,
+                        nullptr, &si, &pi)) {
+        if (saved_path[0]) SetEnvironmentVariableA("PATH", saved_path);
         return {};
     }
     Subprocess proc{ static_cast<int>(pi.dwProcessId) };
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    if (saved_path[0]) SetEnvironmentVariableA("PATH", saved_path);
     return proc;
 #else
     pid_t pid = fork();
@@ -288,6 +379,60 @@ Subprocess LaunchProcess(const std::vector<std::string>& args) {
     }
 
     return Subprocess{ static_cast<int>(pid) };
+#endif
+}
+
+int LaunchDetachedCommand(const std::string& command) {
+#ifdef _WIN32
+    STARTUPINFOA si{};
+    si.cb = sizeof(STARTUPINFOA);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+
+    // Prepend MinGW bin to PATH so child can find runtime DLLs
+    char saved_path[32768] = {};
+    GetEnvironmentVariableA("PATH", saved_path, sizeof(saved_path));
+    bool found_mingw = false;
+
+    char module_path[MAX_PATH] = {};
+    if (GetModuleFileNameA(nullptr, module_path, sizeof(module_path))) {
+        auto p = std::filesystem::path(module_path).parent_path();
+        while (p.has_parent_path()) {
+            auto candidate = p / "mingw64" / "bin";
+            if (std::filesystem::exists(candidate)) {
+                SetEnvironmentVariableA("PATH", (candidate.string() + ";" + saved_path).c_str());
+                found_mingw = true;
+                break;
+            }
+            p = p.parent_path();
+        }
+    }
+    if (!found_mingw) {
+        char ml_buf[MAX_PATH] = {};
+        DWORD ml = GetEnvironmentVariableA("MINGW_PREFIX", ml_buf, sizeof(ml_buf));
+        if (ml > 0 && ml < MAX_PATH) {
+            SetEnvironmentVariableA("PATH", (std::string(ml_buf) + "/bin;" + saved_path).c_str());
+        }
+    }
+
+    if (!CreateProcessA(nullptr, const_cast<char*>(command.c_str()), nullptr, nullptr, FALSE,
+                        CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+                        nullptr, nullptr, &si, &pi)) {
+        if (saved_path[0]) SetEnvironmentVariableA("PATH", saved_path);
+        return -1;
+    }
+
+    int pid = static_cast<int>(pi.dwProcessId);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (saved_path[0]) SetEnvironmentVariableA("PATH", saved_path);
+    return pid;
+#else
+    std::string cmd = command + " > /dev/null 2>&1 & echo $!";
+    std::string pid_str = RunShellCommand(cmd.c_str());
+    if (pid_str.empty()) return -1;
+    return std::atoi(pid_str.c_str());
 #endif
 }
 
@@ -522,6 +667,89 @@ CommandOutput RunCommandWithOutput(const std::string& command,
     waitpid(pid, &stat, 0);
     return {result, WIFEXITED(stat) ? WEXITSTATUS(stat) : -1};
 #endif
+}
+
+// CreatePipe/ClosePipe/ReadPipe/WritePipe/Dup2Pipe/ForkAndExec/WaitProcess
+// are in pipe_handler_posix.cc / pipe_handler_win32.cc
+
+bool SetPipeNonBlocking(int fd) {
+    if (fd < 0) return false;
+#ifndef _WIN32
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return false;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+#else
+    (void)fd;
+    return false;
+#endif
+}
+
+bool IsPipeWouldBlock() {
+#ifndef _WIN32
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#else
+    return false;
+#endif
+}
+
+std::string GetPipeErrorString() {
+#ifndef _WIN32
+    return strerror(errno);
+#else
+    LPVOID buf = nullptr;
+    DWORD err = GetLastError();
+    if (FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+                       nullptr, err, 0, (LPSTR)&buf, 0, nullptr) > 0) {
+        std::string msg((LPSTR)buf);
+        LocalFree(buf);
+        while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r')) {
+            msg.pop_back();
+        }
+        return msg;
+    }
+    return "Unknown error";
+#endif
+}
+
+// ForkAndExec/WaitProcess are in pipe_handler_posix.cc / pipe_handler_win32.cc
+
+ScriptResult ExecuteScriptWithTimeout(const std::string& script_path, int timeout_ms) {
+    ScriptResult result;
+
+    if (!PathExists(script_path)) {
+        result.return_code = -1;
+        result.error_output = "Script not found: " + script_path;
+        return result;
+    }
+
+    std::string command = script_path;
+
+#ifdef _WIN32
+    if (script_path.size() >= 3 && script_path.substr(script_path.size() - 3) == ".py") {
+        command = "python \"" + script_path + "\"";
+    } else if (script_path.size() >= 3 && script_path.substr(script_path.size() - 3) == ".sh") {
+        command = "bash \"" + script_path + "\"";
+    }
+#else
+    std::filesystem::permissions(script_path,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec,
+        std::filesystem::perm_options::add);
+#endif
+
+    int timeout_sec = timeout_ms / 1000;
+    if (timeout_sec < 1) timeout_sec = 1;
+
+    auto cmd_result = RunCommandWithOutput(command, timeout_sec);
+
+    result.return_code = cmd_result.exit_code;
+    result.output = cmd_result.output;
+
+    if (cmd_result.exit_code == -2) {
+        result.timeout = true;
+        result.error_output = "Script timeout after " + std::to_string(timeout_ms) + "ms";
+    }
+
+    return result;
 }
 
 }  // namespace platform

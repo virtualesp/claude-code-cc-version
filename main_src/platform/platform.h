@@ -68,11 +68,56 @@ int GetPid();
 /// Get path to current executable
 std::string GetSelfExePath();
 
+/// Normalize path for the current platform.
+/// On Windows with MinGW, converts POSIX-style /x/... paths to X:\... format.
+std::string NormalizePath(const std::string& path);
+
+/// Check if a filesystem path exists, with platform-specific path normalization.
+bool PathExists(const std::string& path);
+
+/// On Windows, returns win_path if non-empty, otherwise default_path.
+/// On other platforms, always returns default_path.
+/// Used to select a platform-specific config value at compile time without #ifdef.
+std::string SelectPlatformPath(const std::string& default_path, const std::string& win_path);
+
 /// Check if a TCP port is open on localhost
 bool CheckPortOpen(int port);
 
 /// Run a shell command and return stdout (empty on error)
 std::string RunShellCommand(const char* cmd);
+
+// Pipe operations - abstract POSIX APIs for LSP/MCP server communication
+struct PipePair {
+    int read_fd = -1;
+    int write_fd = -1;
+};
+PipePair CreatePipe();
+bool ClosePipe(int fd);
+int ReadPipe(int fd, char* buf, size_t size);
+int WritePipe(int fd, const char* buf, size_t size);
+bool Dup2Pipe(int old_fd, int new_fd);
+
+/// Set a pipe fd to non-blocking mode
+bool SetPipeNonBlocking(int fd);
+
+/// Check if last pipe operation failed with EAGAIN/EWOULDBLOCK
+bool IsPipeWouldBlock();
+
+/// Get error message for last failed pipe operation
+std::string GetPipeErrorString();
+
+// Process creation for spawning servers (used by LSP/MCP)
+struct ForkedProcess {
+    int pid = -1;
+    int stdin_fd = -1;
+    int stdout_fd = -1;
+};
+ForkedProcess ForkAndExec(const std::string& command,
+                          const std::vector<std::string>& args,
+                          const std::string& workdir = "",
+                          const std::vector<std::string>& env = {});
+bool WaitProcess(int pid);
+int GetPid();
 
 /// Opaque handle to a launched subprocess
 struct Subprocess {
@@ -81,6 +126,12 @@ struct Subprocess {
 
 /// Launch a subprocess with args, detach stdin/stdout/stderr
 Subprocess LaunchProcess(const std::vector<std::string>& args);
+
+/// Launch a detached background process from a shell command string.
+/// Linux: system(cmd &) and captures PID via $!.
+/// Windows: CreateProcess with DETACHED_PROCESS.
+/// Returns PID or -1 on failure.
+int LaunchDetachedCommand(const std::string& command);
 
 /// Check if a process with given PID is still alive
 bool IsProcessAlive(int pid);
@@ -98,6 +149,18 @@ struct CommandOutput {
 CommandOutput RunCommandWithOutput(const std::string& command,
                                     int timeout_seconds = 0,
                                     const std::string& workdir = "");
+
+	/// Result of executing a trigger script
+	struct ScriptResult {
+	    int return_code = 0;
+	    std::string output;
+	    std::string error_output;
+	    bool timeout = false;
+	};
+
+	/// Execute a script file with timeout protection.
+	/// Sets execute permission on POSIX, wraps .py/.sh with interpreter on Windows.
+	ScriptResult ExecuteScriptWithTimeout(const std::string& script_path, int timeout_ms = 100);
 
 }  // namespace platform
 }  // namespace prosophor

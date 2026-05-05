@@ -30,12 +30,19 @@ std::vector<std::string> GetSearchPaths() {
         paths.push_back(home + "/.prosophor/llama-server");
     }
 
-    // 3. Development: ../llama.cpp/build/bin/llama-server
+    // 3. Development paths
     if (!self_path.empty()) {
         auto exe_dir = std::filesystem::path(self_path).parent_path();
         if (!exe_dir.empty()) {
+            // 3a. ../llama.cpp/build/bin/llama-server
             paths.push_back((exe_dir / ".." / ".." / "llama.cpp" / "build" / "bin" / "llama-server").lexically_normal().string());
             paths.push_back((exe_dir / ".." / "llama.cpp" / "build" / "bin" / "llama-server").lexically_normal().string());
+            // 3b. Project build directories (build/ on Linux, build_win/ on Windows)
+            auto project_root = exe_dir.parent_path().parent_path();
+            paths.push_back((project_root / "build" / "bin" / "llama-server").lexically_normal().string());
+            paths.push_back((project_root / "build_win" / "bin" / "llama-server").lexically_normal().string());
+            paths.push_back((project_root / "build" / "install" / "bin" / "llama-server").lexically_normal().string());
+            paths.push_back((project_root / "build_win" / "install" / "bin" / "llama-server").lexically_normal().string());
         }
     }
 
@@ -45,6 +52,12 @@ std::vector<std::string> GetSearchPaths() {
     // 5. Common locations
     paths.push_back("/usr/local/bin/llama-server");
     paths.push_back("/usr/bin/llama-server");
+
+    // 6. Append .exe variants for all base paths (cross-platform symmetry)
+    size_t n = paths.size();
+    for (size_t i = 0; i < n; ++i) {
+        paths.push_back(paths[i] + ".exe");
+    }
 
     return paths;
 }
@@ -74,29 +87,6 @@ std::string FindServerBinary() {
     }
 
     return "";
-}
-
-std::string ResolveModelPath(const std::string& path) {
-    if (path.empty()) return path;
-    if (std::filesystem::exists(path)) {
-        return std::filesystem::absolute(path).string();
-    }
-
-    std::string self_path = platform::GetSelfExePath();
-    if (!self_path.empty()) {
-        auto bin_dir = std::filesystem::path(self_path).parent_path();
-        auto try_path = (bin_dir / path).lexically_normal();
-        if (std::filesystem::exists(try_path)) {
-            return try_path.string();
-        }
-        auto project_root = bin_dir.parent_path().parent_path();
-        try_path = (project_root / path).lexically_normal();
-        if (std::filesystem::exists(try_path)) {
-            return try_path.string();
-        }
-    }
-
-    return path;
 }
 
 void DetectHardware(int& out_gpu_layers, int& out_threads) {

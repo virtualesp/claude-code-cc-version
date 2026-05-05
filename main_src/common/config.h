@@ -143,6 +143,7 @@ struct SkillsConfig {
 /// Configuration for local model server (llama-server)
 struct LocalModelConfig {
     std::string model_path;    // Path to GGUF model file
+    std::string model_path_for_win; // Windows-specific model path (overrides model_path on Win32)
     int port = 8080;           // Server port
     int n_gpu_layers = -1;     // GPU layers (-1 = all, 0 = CPU only)
     int n_threads = 0;         // Threads (0 = auto)

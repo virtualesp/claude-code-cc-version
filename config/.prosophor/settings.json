@@ -91,6 +91,20 @@
         }
       },
       {
+        "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "base_url": "https://api.openai.com/v1/chat/completions",
+        "timeout": 60,
+        "agents": {
+          "default": {
+            "model": "gpt-4o",
+            "temperature": 0.7,
+            "max_tokens": 8192,
+            "context_window": 128000,
+            "thinking": false
+          }
+        }
+      },
+      {
         "api_key": "",
         "base_url": "http://localhost:8080/v1/chat/completions",
         "timeout": 120,
@@ -108,12 +122,12 @@
   },
   "local_models": [
     {
-      "model_path": "../llamacpp_model/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "model_path": "../llama_cpp_model/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "model_path_for_win": "/e/ai_ws/llama_cpp_model/google_gemma-4-E4B-it-Q4_K_M.gguf",
       "port": 8080,
       "n_gpu_layers": 0,
       "n_threads": 0,
-      "auto_start": false,
-      "server_path": "",                                                                
+      "auto_start": true,
       "start_timeout_ms": 150000         
     }
   ],

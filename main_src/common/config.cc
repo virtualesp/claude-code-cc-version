@@ -15,6 +15,7 @@
 #include "common/log_wrapper.h"
 #include "common/file_utils.h"
 #include "managers/agent_role_loader.h"
+#include "platform/platform.h"
 
 namespace prosophor {
 
@@ -314,6 +315,9 @@ ProviderConfig ProviderConfig::FromJson(const nlohmann::json& json) {
 LocalModelConfig LocalModelConfig::FromJson(const nlohmann::json& json) {
     LocalModelConfig config;
     config.model_path = json.value("model_path", "");
+    config.model_path_for_win = json.value("model_path_for_win", "");
+    config.model_path = platform::NormalizePath(
+        platform::SelectPlatformPath(config.model_path, config.model_path_for_win));
     config.port = json.value("port", 8080);
     config.n_gpu_layers = json.value("n_gpu_layers", json.value("nGpuLayers", -1));
     config.n_threads = json.value("n_threads", json.value("nThreads", 0));
