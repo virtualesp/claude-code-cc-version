@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "common/log_wrapper.h"
-#include "common/config.h"
+#include "config/config.h"
 #include "platform/platform.h"
 
 #ifdef PROSOPHOR_SDL_UI
-#include "scene/sdl_app.h"
+#include "virtual_sprite.h"
 #else
-#include "cli/agent_commander.h"
+#include "ai_coding.h"
 #endif
 
 // 统一入口：所有平台都用 main()
@@ -23,9 +23,9 @@ int main(int argc, char* argv[]) {
 
     try {
 #ifdef PROSOPHOR_SDL_UI
-        return prosophor::SdlApp::GetInstance().Run();
+        return prosophor::VirtualSprite::GetInstance().Run();
 #else
-        return prosophor::AgentCommander::GetInstance().Run();
+        return prosophor::AiCoding::GetInstance().Run();
 #endif
     } catch (const std::exception& e) {
         LOG_ERROR("Fatal error: {}", e.what());

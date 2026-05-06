@@ -15,7 +15,7 @@
 #include "ui_component/input_panel.h"
 #include "ui_component/ui_container.h"
 #include "ui_component/ui_panel.h"
-#include "media/imgui_widget.h"
+#include "imgui_widget.h"
 #include "log_wrapper.h"
 
 namespace prosophor {

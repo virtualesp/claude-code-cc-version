@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-#include "media/colors.h"
+#include "colors.h"
 #include <string>
 
 namespace prosophor {

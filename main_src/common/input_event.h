@@ -7,8 +7,6 @@
 #include <vector>
 #include <variant>
 #include <sstream>
-#include <functional>
-
 #include "platform/platform.h"
 
 namespace prosophor {
@@ -102,40 +100,5 @@ struct InputEvent {
         return oss.str();
     }
 };
-
-/// 输出事件类型（用于 UI 渲染）
-struct OutputEvent {
-    enum class Type {
-        TextDelta,      // 流式文本增量
-        ToolUse,        // 工具调用
-        ToolResult,     // 工具结果
-        MessageEnd,     // 消息结束
-        StateChange,    // 状态变化
-        Error,          // 错误
-    };
-
-    Type type;
-    std::string content;
-    int state_code = 0;  // AgentRuntimeState enum value
-
-    // 辅助构造方法
-    static OutputEvent Text(const std::string& text) {
-        return OutputEvent{Type::TextDelta, text, 0};
-    }
-
-    static OutputEvent Error(const std::string& error) {
-        return OutputEvent{Type::Error, error, 0};
-    }
-
-    static OutputEvent State(int state, const std::string& msg = "") {
-        return OutputEvent{Type::StateChange, msg, state};
-    }
-};
-
-/// 输入事件回调类型
-using InputEventCallback = std::function<void(const InputEvent&)>;
-
-/// 输出事件回调类型
-using OutputEventCallback = std::function<void(const OutputEvent&)>;
 
 }  // namespace prosophor

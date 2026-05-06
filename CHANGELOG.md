@@ -1,5 +1,55 @@
 # Changelog
 
+## [2026-05-06] - 核心引擎抽象与前后端分离
+
+### 核心架构重构 - prosophor_core
+- 所有业务逻辑集中到 `prosophor_core/` 目录，构建为静态库，零 UI/SDL 依赖
+- 新增 `AgentEngine` 单例 — 统一核心入口，管理 MemoryManager、ToolRegistry、SessionManager、ProviderRouter、LSP、Config、LocalModelManager
+- 新增 `agent_types.h` — `AgentRuntimeState` 从 `ui_types.h` 迁入核心层，消除 UI 对核心状态枚举的依赖
+- 通过 `SetOutputCallback()` / `SetPermissionCallback()` 实现前端无关的回调注册，TUI 和 SDL 共用同一引擎
+
+### TUI 前端重构 - AiCoding
+- `AiCoding` 替代 `AgentCommander`，全新的终端输入循环（`InputHandler` + `InputEvent`）
+- 注册引擎回调：输出流式渲染（thinking/content/tool/complete 各阶段）、权限交互确认
+- `banner.cc/h` 从 `common/` 迁至 `ai_coding/`（终端专属）
+
+### SDL 前端重构 - VirtualSprite
+- `SdlApp` 更名为 `VirtualSprite`，重新设计为 AgentEngine 的前端消费层
+- 模式切换：HOME / VIRTUAL_HUMAN / GALGAME / TERMINAL
+- 通过 `RegisterAgentOutputCallback()` + `RegisterMessageSubmitCallback()` 挂载引擎回调
+- 状态可视化属性内联（移除 `agent_state_visualizer.h`）
+
+### 构建系统重构
+- `main_src/CMakeLists.txt` 完全重写，分为三个目标：`prosophor_core`（静态库）、TUI `prosophor`、SDL `prosophor`
+- TUI 构建仅链接 prosophor_core + ai_coding，无 SDL/media/scene 依赖
+- SDL 构建链接 prosophor_core + media_engine + scene + virtual_sprite + components
+- 平台源文件（input_handler/pipe_handler）按平台正确选择
+- `tests/CMakeLists.txt` 新增 prosophor_core include 路径
+- 顶层 `CMakeLists.txt`：安装 llama.cpp 启停脚本
+
+### 删除模块
+- 移除 `cli/agent_commander.cc/h`（功能由 AiCoding 替代）
+- 移除 `tools/tool_registry.cc/h`（功能由 AgentEngine 封装）
+- 移除 `tools/command_tools/background_run_tool.cc/h`
+- 移除 `core/agent_state_visualizer.h`
+- 移除 `input_event.h` 中的 `OutputEvent`、`InputEventCallback`、`OutputEventCallback`（移至前端层）
+
+### llama.cpp 管理脚本
+- 新增 `scripts/start_llamacpp_server.sh` / `.bat` — 从 settings.json 读取配置，自动查找二进制与模型文件，后台启动并输出 PID
+- 新增 `scripts/stop_llamacpp_server.sh` / `.bat` — 按 PID 停止，支持 `--force`
+
+### 其他
+- media_engine UI 组件内部 include 移除 `media/` 前缀（`media/colors.h` → `colors.h`）
+- `agent_state_observer.h` 改为引用 `core/agent_types.h`
+
+### 文件统计
+- 变更文件：109 个
+- 新增：+1,069 行
+- 删除：-2,954 行
+- 净变化：-1,885 行（大幅精简）
+
+---
+
 ## [2026-05-05] - 管道抽象层与跨平台完善
 
 ### 管道与进程抽象 (pipe_handler)

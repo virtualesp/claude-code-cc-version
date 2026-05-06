@@ -155,40 +155,35 @@ main_src/
 
 ## Quick Start
 
-### Requirements
+### Install
 
-| Component | Requirement |
-|-----------|-------------|
-| Compiler | C++17 or later |
-| CMake | 3.20+ |
-| Dependencies | spdlog, nlohmann/json, libcurl, OpenSSL (auto-downloaded) |
-
-### Build
+**macOS / Linux** (one command):
 
 ```bash
-git clone https://github.com/Swair/prosophor.git
-cd prosophor
-make build
+curl -fsSL https://aicodingbox.com/install.sh | bash
 ```
 
-Or manually:
+**Windows** (PowerShell):
 
-```bash
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc) && make install
+```powershell
+irm https://aicodingbox.com/install.ps1 | iex
 ```
 
-Skip llama.cpp build:
-```bash
-cmake .. -DPROSOPHOR_BUILD_LLAMA=OFF
-```
+Or via package manager:
+
+| Platform | Command |
+|----------|---------|
+| **Homebrew** (macOS/Linux) | `brew install Swair/tap/prosophor` |
+| **Scoop** (Windows) | `scoop install prosophor` |
+| **WinGet** (Windows) | `winget install Swair.prosophor` |
 
 ### Run
 
 ```bash
-./build/install/bin/prosophor
+prosophor
 ```
+
+On first launch, config `~/.prosophor/config.json` is auto-generated.
 
 ### Configure
 
@@ -237,6 +232,41 @@ Config generated at `~/.prosophor/config.json` on first run:
 | `/mcp` | MCP servers | `/skill` | Skill mgmt |
 | `/setup` | Auto-configure local model | `/token` | Token usage |
 | `/exit` | Exit |
+
+---
+
+## Build from Source
+
+For developers or users who want to compile from source:
+
+### Requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| Compiler | C++17 or later |
+| CMake | 3.20+ |
+| Dependencies | spdlog, nlohmann/json, libcurl, OpenSSL (auto-downloaded) |
+
+### Build
+
+```bash
+git clone https://github.com/Swair/prosophor.git
+cd prosophor
+make build
+```
+
+Or manually:
+
+```bash
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc) && make install
+```
+
+Skip llama.cpp build:
+```bash
+cmake .. -DPROSOPHOR_BUILD_LLAMA=OFF
+```
 
 ---
 

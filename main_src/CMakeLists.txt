@@ -5,7 +5,6 @@ project(prosophor_core VERSION 1.0.0 LANGUAGES CXX)
 include(FetchContent)
 
 ############################################# spdlog #####################################
-# 检查：thirdparty_src 目录存在则使用，否则下载
 if(EXISTS "${CMAKE_SOURCE_DIR}/thirdparty_src/spdlog-src")
     message(STATUS "Found spdlog in thirdparty_src, using existing download")
     FetchContent_Declare(spdlog SOURCE_DIR "${CMAKE_SOURCE_DIR}/thirdparty_src/spdlog-src")
@@ -19,11 +18,9 @@ else()
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/thirdparty_src/spdlog-src
     )
 endif()
-
 FetchContent_MakeAvailable(spdlog)
 
 ############################################# nlohmann_json #####################################
-# 检查：thirdparty_src 目录存在则使用，否则下载
 if(EXISTS "${CMAKE_SOURCE_DIR}/thirdparty_src/nlohmann_json-src")
     message(STATUS "Found nlohmann_json in thirdparty_src, using existing download")
     FetchContent_Declare(nlohmann_json SOURCE_DIR "${CMAKE_SOURCE_DIR}/thirdparty_src/nlohmann_json-src")
@@ -37,74 +34,44 @@ else()
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/thirdparty_src/nlohmann_json-src
     )
 endif()
-
 FetchContent_MakeAvailable(nlohmann_json)
-
-add_subdirectory(media_engine)
 
 # Required dependencies
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 
-# Collect source files excluding platform-specific ones
-file(GLOB_RECURSE CC_FILES_LIST
-    ${CMAKE_CURRENT_LIST_DIR}/agents/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/cli/*.cc
+# ============================================================================
+# prosophor_core: pure business logic, no UI/SDL dependency
+# Used by both TUI and SDL builds
+# ============================================================================
+file(GLOB_RECURSE AGENT_ENGINE_SOURCES
+    ${CMAKE_CURRENT_LIST_DIR}/prosophor_core/*.cc
     ${CMAKE_CURRENT_LIST_DIR}/common/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/components/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/core/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/managers/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/mcp/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/platform/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/providers/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/services/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/tools/*.cc
-    ${CMAKE_CURRENT_LIST_DIR}/scene/home_screen.cc            # Home screen mode selector
-    ${CMAKE_CURRENT_LIST_DIR}/scene/agent_state_observer.cc  # Always include for visualizer
-    ${CMAKE_CURRENT_LIST_DIR}/scene/anime_character.cc       # Anime teacher character renderer
-    ${CMAKE_CURRENT_LIST_DIR}/scene/galgame_mode.cc          # GALGAME mode scene
-    ${CMAKE_CURRENT_LIST_DIR}/scene/sdl_app.cc               # SDL app entry
-    ${CMAKE_CURRENT_LIST_DIR}/scene/ui_renderer.cc           # UI renderer
 )
 
-# PROSOPHOR_SDL_UI flag
-if(PROSOPHOR_SDL_UI)
-    add_compile_definitions(PROSOPHOR_SDL_UI)
-endif()
-
-# Exclude platform-specific implementation files
-list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/input_handler\\.cc$")
-list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/input_handler_posix\\.cc$")
-list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/input_handler_win32\\.cc$")
-list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/pipe_handler\\.cc$")
-list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/pipe_handler_posix\\.cc$")
-list(FILTER CC_FILES_LIST EXCLUDE REGEX ".*/platform/pipe_handler_win32\\.cc$")
-
-# Add new input abstraction layer files
-list(APPEND CC_FILES_LIST
-    ${CMAKE_CURRENT_LIST_DIR}/cli/terminal_input.cc
-    ${CMAKE_CURRENT_LIST_DIR}/cli/output_manager.cc
-)
-
-
-# Add platform-specific input_handler based on the target platform
 if(WIN32)
-    list(APPEND CC_FILES_LIST
+    set(PLATFORM_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/platform/platform.cc
         ${CMAKE_CURRENT_LIST_DIR}/platform/input_handler_win32.cc
         ${CMAKE_CURRENT_LIST_DIR}/platform/pipe_handler_win32.cc
     )
 else()
-    list(APPEND CC_FILES_LIST
+    set(PLATFORM_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/platform/platform.cc
         ${CMAKE_CURRENT_LIST_DIR}/platform/input_handler_posix.cc
         ${CMAKE_CURRENT_LIST_DIR}/platform/pipe_handler_posix.cc
     )
 endif()
 
-add_library(prosophor_core STATIC ${CC_FILES_LIST})
+add_library(prosophor_core STATIC
+    ${AGENT_ENGINE_SOURCES}
+    ${PLATFORM_SOURCES}
+)
 
 target_include_directories(prosophor_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/prosophor_core>
 )
 
 target_compile_definitions(prosophor_core PUBLIC
@@ -115,7 +82,6 @@ target_compile_definitions(prosophor_core PUBLIC
 
 target_link_libraries(prosophor_core
     PUBLIC
-        media_engine
         spdlog::spdlog
         nlohmann_json::nlohmann_json
     PRIVATE
@@ -128,29 +94,77 @@ if(WIN32)
     target_link_libraries(prosophor_core PUBLIC ws2_32 bcrypt)
 endif()
 
-if(PROSOPHOR_SDL_UI)
-    add_executable(prosophor WIN32 main.cc)
-else()
-    add_executable(prosophor main.cc)
+# ============================================================================
+# TUI build: prosophor_core + ai_coding, no SDL/media/scene
+# ============================================================================
+if(NOT PROSOPHOR_SDL_UI)
+    file(GLOB_RECURSE TUI_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/ai_coding/*.cc
+    )
+
+    add_executable(prosophor ${TUI_SOURCES} main.cc)
+
+    target_include_directories(prosophor PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/ai_coding
+    )
+
+    target_link_libraries(prosophor PRIVATE prosophor_core)
 endif()
 
-target_link_libraries(prosophor PRIVATE prosophor_core)
-target_include_directories(prosophor PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
+# ============================================================================
+# SDL build: prosophor_core + media_engine + scene + virtual_sprite
+# ============================================================================
+if(PROSOPHOR_SDL_UI)
+    add_subdirectory(media_engine)
 
+    add_compile_definitions(PROSOPHOR_SDL_UI)
+
+    file(GLOB_RECURSE SCENE_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/scene/*.cc
+    )
+
+    file(GLOB_RECURSE GUI_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/virtual_sprite/*.cc
+    )
+
+    file(GLOB_RECURSE COMPONENTS_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/components/*.cc
+    )
+# WIN32
+    add_executable(prosophor 
+        main.cc
+        ${SCENE_SOURCES}
+        ${GUI_SOURCES}
+        ${COMPONENTS_SOURCES}
+    )
+
+    target_include_directories(prosophor PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/scene
+        ${CMAKE_CURRENT_SOURCE_DIR}/virtual_sprite
+        ${CMAKE_CURRENT_SOURCE_DIR}/components
+    )
+
+    target_link_libraries(prosophor PRIVATE
+        prosophor_core
+        media_engine
+    )
+endif()
+
+# ============================================================================
 # Compiler flags
+# ============================================================================
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(prosophor_core PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Werror -O2)
-    target_compile_options(prosophor PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Werror -O2)
+    target_compile_options(prosophor        PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Werror -O2)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         target_compile_options(prosophor_core PRIVATE /W4 /WX /Od /RTC1 /EHsc)
-        target_compile_options(prosophor PRIVATE /W4 /WX /Od /RTC1 /EHsc)
+        target_compile_options(prosophor        PRIVATE /W4 /WX /Od /RTC1 /EHsc)
     else()
         target_compile_options(prosophor_core PRIVATE /W4 /WX /O2 /EHsc)
-        target_compile_options(prosophor PRIVATE /W4 /WX /O2 /EHsc)
+        target_compile_options(prosophor        PRIVATE /W4 /WX /O2 /EHsc)
     endif()
 endif()
 

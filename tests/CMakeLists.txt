@@ -33,6 +33,7 @@ include(GoogleTest)
 # Common test configuration
 set(TEST_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/../main_src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main_src/prosophor_core
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

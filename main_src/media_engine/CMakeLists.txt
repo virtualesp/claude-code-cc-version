@@ -176,6 +176,7 @@ target_include_directories(${PROJECT_NAME}
 PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/media
 PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/imgui_interface
     ${CMAKE_CURRENT_LIST_DIR}/sdl_interface
     ${CMAKE_CURRENT_LIST_DIR}/../common

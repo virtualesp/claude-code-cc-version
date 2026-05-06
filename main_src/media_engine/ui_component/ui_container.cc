@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "ui_component/ui_container.h"
-#include "media/imgui_widget.h"
+#include "imgui_widget.h"
 
 namespace prosophor {
 

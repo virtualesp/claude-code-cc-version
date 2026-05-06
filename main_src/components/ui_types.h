@@ -5,35 +5,15 @@
 #include <cstdint>
 #include <string>
 
-// ============================================================================
-// UI 通用类型定义 - 放在 common/ 避免循环依赖
-// ============================================================================
+#include "core/agent_types.h"
 
 namespace prosophor {
 
-/// Agent 运行时状态
-enum class AgentRuntimeState {
-    IDLE,
-    BEGINNING,
-    EXECUTING_TOOL,
-    TOOL_USE,
-    WAITING_PERMISSION,
-    STATE_ERROR,
-    COMPLETE,
-    STREAM_CONTENT_TYPING,      // 流式响应中
-    STREAM_MODE_COMPLETE,   // 流式响应完成
-    STREAM_THINKING_START,  // 流式思考开始
-    STREAM_THINKING,        // 流式思考中
-    STREAM_THINKING_END,    // 流式思考结束
-    STREAM_CONTENT_START,   // 流式内容开始
-    STREAM_CONTENT_END      // 流式内容结束
-};
-
 /// 聊天消息结构
 struct ChatMessage {
-    std::string role;     // "user", "assistant", "system"
-    std::string name;     // 显示的名字（如"代码专家"、"用户"）
-    std::string content;  // 消息内容
+    std::string role;
+    std::string name;
+    std::string content;
     double timestamp;
 };
 

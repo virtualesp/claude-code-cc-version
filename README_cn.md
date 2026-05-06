@@ -143,41 +143,35 @@ main_src/
 
 ## 快速开始
 
-### 环境要求
+### 安装
 
-| 组件 | 要求 |
+**macOS / Linux**（一条命令）：
+
+```bash
+curl -fsSL https://aicodingbox.com/install.sh | bash
+```
+
+**Windows**（PowerShell）：
+
+```powershell
+irm https://aicodingbox.com/install.ps1 | iex
+```
+
+或者通过包管理器：
+
+| 平台 | 命令 |
 |------|------|
-| 编译器 | C++17 或更高 |
-| CMake | 3.20+ |
-| 依赖 | spdlog、nlohmann/json、libcurl、OpenSSL（自动下载） |
-
-### 构建
-
-```bash
-git clone https://github.com/Swair/prosophor.git
-cd prosophor
-make build
-```
-
-或手动：
-
-```bash
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc) && make install
-```
-
-跳过 llama.cpp 编译：
-
-```bash
-cmake .. -DPROSOPHOR_BUILD_LLAMA=OFF
-```
+| **Homebrew** (macOS/Linux) | `brew install Swair/tap/prosophor` |
+| **Scoop** (Windows) | `scoop install prosophor` |
+| **WinGet** (Windows) | `winget install Swair.prosophor` |
 
 ### 运行
 
 ```bash
-./build/install/bin/prosophor
+prosophor
 ```
+
+首次启动会自动生成配置文件 `~/.prosophor/config.json`。
 
 ### 配置
 
@@ -226,6 +220,42 @@ cmake .. -DPROSOPHOR_BUILD_LLAMA=OFF
 | `/mcp` | MCP 服务器 | `/skill` | 技能管理 |
 | `/setup` | 自动配置本地模型 | `/token` | Token 用量 |
 | `/exit` | 退出 | | |
+
+---
+
+## 从源码构建
+
+适合开发者或需要自定义编译的用户：
+
+### 环境要求
+
+| 组件 | 要求 |
+|------|------|
+| 编译器 | C++17 或更高 |
+| CMake | 3.20+ |
+| 依赖 | spdlog、nlohmann/json、libcurl、OpenSSL（自动下载） |
+
+### 构建
+
+```bash
+git clone https://github.com/Swair/prosophor.git
+cd prosophor
+make build
+```
+
+或手动：
+
+```bash
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc) && make install
+```
+
+跳过 llama.cpp 编译：
+
+```bash
+cmake .. -DPROSOPHOR_BUILD_LLAMA=OFF
+```
 
 ---
 

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "common/noncopyable.h"
-#include "core/agent_state_visualizer.h"
+#include "core/agent_types.h"
 #include "scene/anime_character.h"
 
 #include <string>
