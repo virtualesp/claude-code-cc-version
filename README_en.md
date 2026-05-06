@@ -1,5 +1,11 @@
 # Prosophor
 
+<div align="right">
+
+**English** | [**中文**](README.md)
+
+</div>
+
 <div align="center">
 
 **The Proactive Agentic CLI — from passive response to proactive interaction**

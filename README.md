@@ -1,5 +1,11 @@
 # Prosophor
 
+<div align="right">
+
+[**English**](README_en.md) | **中文**
+
+</div>
+
 <div align="center">
 
 **主动式 Agentic CLI —— 从被动响应到主动交互**
