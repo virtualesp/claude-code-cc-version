@@ -3,7 +3,7 @@
 """
 文件整理触发脚本（跨平台）
 检测下载文件夹中文件数量，超过 50 个触发
-返回 0 = 触发，返回 1 = 不触发
+返回非 0 = 触发，返回 0 = 不触发
 """
 import sys
 from pathlib import Path
@@ -37,4 +37,4 @@ def check_downloads_folder():
 
 
 if __name__ == "__main__":
-    sys.exit(0 if check_downloads_folder() else 1)
+    sys.exit(1 if check_downloads_folder() else 0)

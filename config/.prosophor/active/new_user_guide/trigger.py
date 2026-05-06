@@ -3,7 +3,7 @@
 """
 新用户引导触发脚本（跨平台）
 检测是否存在新用户标记文件
-返回 0 = 触发（新用户），返回 1 = 不触发（老用户）
+返回非 0 = 触发（新用户），返回 0 = 不触发（老用户）
 """
 import sys
 from pathlib import Path
@@ -20,4 +20,4 @@ def check_first_run():
 
 
 if __name__ == "__main__":
-    sys.exit(0 if check_first_run() else 1)
+    sys.exit(1 if check_first_run() else 0)
