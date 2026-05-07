@@ -9,6 +9,7 @@
 #include <optional>
 #include <functional>
 #include <atomic>
+#include <mutex>
 
 #include <nlohmann/json.hpp>
 
@@ -52,6 +53,7 @@ struct AgentSession {
 
     // --- 运行时配置 ---
     bool use_tools = true;                  // 是否使用工具
+    bool auto_confirm_tools = false;        // 是否自动确认工具（per-session，不影响全局）
     std::string working_directory;          // 工作目录
     ToolExecutorCallback tool_executor;     // 工具执行器
     SessionOutputCallback output_callback;  // 输出回调（通知 UI 状态和消息）
@@ -101,6 +103,9 @@ struct AgentSession {
     SteadyClock::TimePoint last_active;
     bool is_active = true;
 
+    // Per-session 锁：确保同一 session 的 Loop 调用串行执行
+    std::mutex session_mutex;
+
     // === 构造函数 ===
     AgentSession() {
         created_at = SteadyClock::Now();
@@ -130,6 +135,7 @@ struct AgentSession {
         : role(other.role),
           mutable_role_(std::move(other.mutable_role_)),
           use_tools(other.use_tools),
+          auto_confirm_tools(other.auto_confirm_tools),
           working_directory(std::move(other.working_directory)),
           tool_executor(std::move(other.tool_executor)),
           output_callback(std::move(other.output_callback)),
@@ -159,6 +165,7 @@ struct AgentSession {
             role = other.role;
             mutable_role_ = std::move(other.mutable_role_);
             use_tools = other.use_tools;
+            auto_confirm_tools = other.auto_confirm_tools;
             working_directory = std::move(other.working_directory);
             tool_executor = std::move(other.tool_executor);
             output_callback = std::move(other.output_callback);

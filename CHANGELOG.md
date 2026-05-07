@@ -1,5 +1,44 @@
 # Changelog
 
+## [2026-05-07] - 会话系统重构与多角色渲染
+
+### 引擎多会话 API
+- `AgentEngine` 新增 `CreateSession()` / `SendMessage(session_id, text)` / `StopSession(session_id)` 多会话公开接口，为 server/多角色场景准备
+- `current_session_id_` 更名为 `focused_session_id_`，明确单会话便捷接口的语义范围
+- `OutputCallback` 签名增加 `session_id` 和 `role_id` 参数，下行通道支持多 session 路由
+
+### 会话管理器重构
+- `AgentSessionManager` 移除 `MemoryManager` 依赖和 `SwitchMemoryContext()`，职责简化
+- `sessions_` 容器从 `unordered_map<string, AgentSession>` 改为 `unordered_map<string, unique_ptr<AgentSession>>`，确保 session 指针地址稳定
+- 新增 `session_mutex` per-session 锁，保证同一 session 的 `AgentCore::Loop` 调用串行执行
+- `auto_confirm_tools` 改为 per-session 临时提权：创建 session 时包装 tool_executor，调用期间临时切换 PermissionManager 模式后恢复，不再影响全局
+- `GetSession()` 增加 `mutex_` 保护，线程安全
+
+### 角色状态可视化多实例
+- `AgentStateVisualizer` 新增 `GetOrCreate(role_id)` 工厂方法，每个角色独立实例
+- `UpdateAll()` / `RenderAll()` 静态方法，支持多角色并行更新和渲染
+- `VirtualSprite` 输出回调改为写入 `session_states_` 队列，`DispatchSessionStates()` 在渲染循环中统一派发到对应角色的 visualizer
+
+### llama.cpp 脚本精简与迁移
+- 启动脚本从 `scripts/` 迁移至 `config/.prosophor/scripts/`，随配置目录一同分发
+- 启动脚本去掉 jq/python3 配置解析逻辑，改为纯参数传递，脚本职责单一化
+- 删除 Windows `.bat` 版本（`start_llamacpp_server.bat`、`stop_llamacpp_server.bat`）和旧版 `start_llamacpp_server.sh`
+- `LocalModelManager::Start()` 改为调用外部脚本而非内联构造参数
+- 删除 CMake 中脚本安装规则（脚本已随 config 目录安装）
+
+### 平台层清理
+- 新增 `platform::NullDevice()` 跨平台空设备路径（POSIX `/dev/null` / Windows `NUL`）
+- `CheckPortOpen()` / `WaitForHealth()` 改用 `NullDevice()` 代替硬编码路径
+- `LaunchDetachedCommand()` 大幅简化：删除 Windows `CreateProcess` 内联实现（改由 shell 脚本处理后台逻辑），统一为 `RunShellCommand`
+
+### 文件统计
+- 变更文件：19 个
+- 新增：+281 行
+- 删除：-416 行
+- 净变化：-135 行（持续精简）
+
+---
+
 ## [2026-05-06] - 核心引擎抽象与前后端分离
 
 ### 核心架构重构 - prosophor_core

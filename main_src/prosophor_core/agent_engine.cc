@@ -72,15 +72,16 @@ void AgentEngine::InitializeComponents() {
             return tool_registry_->ExecuteTool(tool_name, args);
         };
 
-    session_manager_->Initialize(memory_manager_, tool_executor);
+    session_manager_->Initialize(tool_executor);
 
     // Route session output to the registered output callback.
+    // session_id and role_id are now passed through (no longer discarded).
     session_manager_->SetOutputCallback(
-        [this](const std::string& /*session_id*/, const std::string& /*role_id*/,
+        [this](const std::string& session_id, const std::string& role_id,
                AgentRuntimeState state, const std::string& state_msg,
                const std::optional<MessageSchema>& reply) {
             if (output_callback_) {
-                output_callback_(state, state_msg, reply);
+                output_callback_(session_id, role_id, state, state_msg, reply);
             }
         });
 
@@ -107,9 +108,8 @@ void AgentEngine::InitializeComponents() {
         }
     }
 
-    current_session_id_ = session_manager_->CreateSession(default_role_id, "Default session");
-
-    LOG_DEBUG("AgentEngine initialized, session={} role={}", current_session_id_, default_role_id);
+    focused_session_id_ = session_manager_->CreateSession(default_role_id, "Default session");
+    LOG_DEBUG("AgentEngine initialized, session={} role={}", focused_session_id_, default_role_id);
 
     if (!config_.local_models.empty() && config_.local_models[0].auto_start) {
         auto& lm = config_.local_models[0];
@@ -136,7 +136,7 @@ void AgentEngine::ProcessUserMessage(const std::string& text) {
     }
     try {
         last_interaction_time_ = std::time(nullptr);
-        session_manager_->SendToSessionAsync(current_session_id_, text);
+        session_manager_->SendToSessionAsync(focused_session_id_, text);
     } catch (const std::exception& e) {
         LOG_ERROR("ProcessUserMessage error: {}", e.what());
     }
@@ -162,9 +162,9 @@ bool AgentEngine::HandleCommand(const std::string& line) {
 
     CommandContext ctx;
     ctx.workspace   = workspace_path_;
-    ctx.session_id  = current_session_id_;
+    ctx.session_id  = focused_session_id_;
     ctx.user_data   = this;
-    ctx.agent_session = session_manager_->GetSession(current_session_id_);
+    ctx.agent_session = session_manager_->GetSession(focused_session_id_);
 
     auto result = CommandRegistry::GetInstance().ExecuteCommand(cmd_name, cmd_args, ctx);
     if (!result.output.empty()) {
@@ -185,12 +185,33 @@ void AgentEngine::SwitchRole(const std::string& role_id) {
         std::cout << "\n";
         return;
     }
-    current_session_id_ = session_manager_->CreateSession(role->id, "Switched to " + role->name);
-    LOG_INFO("Switched to role: {} (session: {})", role->id, current_session_id_);
+    focused_session_id_ = session_manager_->CreateSession(role->id, "Switched to " + role->name);
+    LOG_INFO("Switched to role: {} (session: {})", role->id, focused_session_id_);
 }
 
 void AgentEngine::StopCurrentSession() {
-    auto* session = session_manager_->GetSession(current_session_id_);
+    auto* session = session_manager_->GetSession(focused_session_id_);
+    if (session) {
+        session->stop_requested = true;
+    }
+}
+
+std::string AgentEngine::CreateSession(const std::string& role_id,
+                                        const std::string& task_desc) {
+    return session_manager_->CreateSession(role_id, task_desc);
+}
+
+void AgentEngine::SendMessage(const std::string& session_id, const std::string& text) {
+    try {
+        last_interaction_time_ = std::time(nullptr);
+        session_manager_->SendToSessionAsync(session_id, text);
+    } catch (const std::exception& e) {
+        LOG_ERROR("SendMessage error (session={}): {}", session_id, e.what());
+    }
+}
+
+void AgentEngine::StopSession(const std::string& session_id) {
+    auto* session = session_manager_->GetSession(session_id);
     if (session) {
         session->stop_requested = true;
     }

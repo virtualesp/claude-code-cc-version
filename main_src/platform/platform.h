@@ -86,6 +86,9 @@ bool CheckPortOpen(int port);
 /// Run a shell command and return stdout (empty on error)
 std::string RunShellCommand(const char* cmd);
 
+/// Return platform null device path ("/dev/null" on POSIX, "NUL" on Windows)
+const char* NullDevice();
+
 // Pipe operations - abstract POSIX APIs for LSP/MCP server communication
 struct PipePair {
     int read_fd = -1;

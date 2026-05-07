@@ -10,6 +10,8 @@
 #include <memory>
 #include <mutex>
 #include <functional>
+#include <unordered_map>
+#include <vector>
 
 namespace prosophor {
 
@@ -53,10 +55,21 @@ class AgentStateNotifier : public Noncopyable {
 };
 
 /// AgentStateVisualizer: Renders virtual human anime character + blackboard
-/// Teacher character with breathing/blinking animation on a chalkboard background
+/// Each role gets its own instance via GetOrCreate(role_id).
 class AgentStateVisualizer : public Noncopyable {
  public:
+    /// Default singleton (backward-compat for single-role modes)
     static AgentStateVisualizer& GetInstance();
+
+    /// Per-role instance — creates on first call, returns existing on subsequent calls.
+    /// role_id="" falls back to GetInstance().
+    static AgentStateVisualizer& GetOrCreate(const std::string& role_id);
+
+    /// Update all per-role instances (call from update loop)
+    static void UpdateAll(float delta_time);
+
+    /// Render all per-role instances (call from render loop)
+    static void RenderAll();
 
     /// Initialize visual resources
     void Initialize();

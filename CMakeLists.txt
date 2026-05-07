@@ -81,20 +81,5 @@ endif()
 
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/config/.prosophor/ DESTINATION ${PROSOPHOR_INSTALL_DIR})
 
-# Install start/stop scripts to bin/scripts/
-if(WIN32)
-    install(PROGRAMS
-        ${CMAKE_SOURCE_DIR}/scripts/start_llamacpp_server.bat
-        ${CMAKE_SOURCE_DIR}/scripts/stop_llamacpp_server.bat
-        DESTINATION bin/scripts
-    )
-else()
-    install(PROGRAMS
-        ${CMAKE_SOURCE_DIR}/scripts/start_llamacpp_server.sh
-        ${CMAKE_SOURCE_DIR}/scripts/stop_llamacpp_server.sh
-        DESTINATION bin/scripts
-    )
-endif()
-
 # # Install assets directory to bin/assets (relative to executable)
 # install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets/ DESTINATION bin/assets)

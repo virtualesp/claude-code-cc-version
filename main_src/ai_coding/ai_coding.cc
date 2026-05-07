@@ -41,7 +41,8 @@ void AiCoding::RegisterCallbacks() {
     auto& engine = AgentEngine::GetInstance();
 
     engine.SetOutputCallback(
-        [](AgentRuntimeState state, const std::string& state_msg,
+        [](const std::string& /*session_id*/, const std::string& /*role_id*/,
+           AgentRuntimeState state, const std::string& state_msg,
            const std::optional<MessageSchema>& reply) {
             switch (state) {
                 case AgentRuntimeState::BEGINNING:

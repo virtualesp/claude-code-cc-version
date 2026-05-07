@@ -6,12 +6,21 @@
 #include "common/noncopyable.h"
 #include "common/input_event.h"
 #include "scene/home_screen.h"
+#include "core/agent_types.h"
 #include <functional>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace prosophor {
 
+/// Per-session render state cached by the OutputCallback.
+struct SessionRenderState {
+    std::string role_id;
+    AgentRuntimeState agent_state = AgentRuntimeState::IDLE;
+};
+
 /// VirtualSprite: SDL-based graphical interface entry point
-/// SDL dependencies are hidden behind media_engine interfaces
 class VirtualSprite : public Noncopyable {
  public:
     static VirtualSprite& GetInstance();
@@ -19,20 +28,13 @@ class VirtualSprite : public Noncopyable {
     int Run();
     void Stop();
 
-    /// Handle text input
     void HandleTextInput(const char* text);
-
-    /// Handle key event
     void HandleKeyDown(int key_code);
-
-    /// Handle mouse event
     void HandleMouseButtonDown(int x, int y);
 
-    /// Set input event callback
     using InputCallback = std::function<void(const InputEvent&)>;
     void SetInputCallback(InputCallback callback);
 
-    /// Get current UI mode
     UIMode GetCurrentMode() const { return current_scene_; }
 
  private:
@@ -41,26 +43,27 @@ class VirtualSprite : public Noncopyable {
 
     void Initialize();
     void Shutdown();
-
-    /// Switch to a different UI mode
     void SwitchMode(UIMode mode);
 
-    /// Mode-specific render handlers
     void RenderHome();
     void RenderVirtualHuman();
     void RenderGalgame();
     void RenderTerminal();
 
-    /// Register AgentEngine output callback for SDL modes
+    /// Register OutputCallback: writes into session_states_ (called once at mode switch)
     void RegisterAgentOutputCallback();
 
-    /// Register UIRenderer message submit callback for SDL modes
+    /// Register UIRenderer message submit callback
     void RegisterMessageSubmitCallback();
 
     InputCallback input_callback_;
     UIMode current_scene_ = UIMode::HOME;
-
     InputCallback saved_callback_;
+
+    // SDL-side global state: keyed by session_id, written by OutputCallback (worker thread),
+    // read by render loop (main thread). Mutex guards concurrent access.
+    std::unordered_map<std::string, SessionRenderState> session_states_;
+    std::mutex session_states_mutex_;
 };
 
 }  // namespace prosophor

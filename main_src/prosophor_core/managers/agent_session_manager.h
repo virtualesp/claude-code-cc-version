@@ -16,7 +16,6 @@
 #include "core/agent_role.h"
 #include "core/agent_session.h"
 #include "core/agent_core.h"
-#include "managers/memory_manager.h"
 
 namespace prosophor {
 
@@ -114,8 +113,7 @@ public:
     // 初始化
     // =====================
 
-    void Initialize(std::shared_ptr<MemoryManager> memory_manager,
-                    ToolExecutorCallback tool_executor);
+    void Initialize(ToolExecutorCallback tool_executor);
 
     /// 设置工具执行器
     void SetToolExecutor(ToolExecutorCallback tool_executor);
@@ -127,9 +125,8 @@ private:
     AgentSessionManager() = default;
 
     std::unordered_map<std::string, AgentRole> roles_;
-    std::unordered_map<std::string, AgentSession> sessions_;
+    std::unordered_map<std::string, std::unique_ptr<AgentSession>> sessions_;
 
-    std::shared_ptr<MemoryManager> memory_manager_;
     ToolExecutorCallback tool_executor_;
     SessionOutputCallback output_callback_;
 
@@ -137,9 +134,6 @@ private:
 
     /// 生成唯一 session ID
     std::string GenerateSessionId(const std::string& role_id);
-
-    /// 切换记忆上下文
-    void SwitchMemoryContext(const AgentSession& session);
 
     /// 构建 system prompt（组合 Role Memory + Session History + Role 配置）
     std::vector<SystemSchema> BuildSystemPrompt(const AgentSession& session);

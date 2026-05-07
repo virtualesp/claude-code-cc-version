@@ -25,9 +25,7 @@ AgentSessionManager& AgentSessionManager::GetInstance() {
     return instance;
 }
 
-void AgentSessionManager::Initialize(std::shared_ptr<MemoryManager> memory_manager,
-                                     ToolExecutorCallback tool_executor) {
-    memory_manager_ = memory_manager;
+void AgentSessionManager::Initialize(ToolExecutorCallback tool_executor) {
     tool_executor_ = tool_executor;
     LOG_DEBUG("AgentSessionManager initialized");
 
@@ -122,7 +120,7 @@ void AgentSessionManager::Initialize(std::shared_ptr<MemoryManager> memory_manag
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [id, session] : sessions_) {
             auto last_active_secs = std::chrono::duration_cast<std::chrono::seconds>(
-                session.last_active.time_since_epoch()).count();
+                session->last_active.time_since_epoch()).count();
             if (last_active_secs > now_secs - 300) {  // 5 分钟
                 return true;  // 用户活跃
             }
@@ -198,17 +196,26 @@ std::string AgentSessionManager::CreateSession(const std::string& role_id,
     AgentRole& role = it->second;
     std::string session_id = GenerateSessionId(role_id);
 
-    // 如果角色配置了自动确认工具，设置权限模式为 auto（跳过 Permission Required）
-    if (role.auto_confirm_tools) {
-        auto& perm_manager = PermissionManager::GetInstance();
-        perm_manager.SetMode("auto");
-        LOG_DEBUG("Role has auto_confirm_tools=true, setting permission mode to 'auto'", role_id);
-    }
-
     AgentSession session(session_id, role_id, task_desc, &role);
-    // Copy runtime dependencies from manager
-    session.tool_executor = tool_executor_;
-    session.output_callback = output_callback_;
+    session.auto_confirm_tools = role.auto_confirm_tools;
+    // Per-session tool executor: temporarily elevates permission when auto_confirm is set
+    {
+        bool auto_confirm = session.auto_confirm_tools;
+        ToolExecutorCallback base_executor = tool_executor_;
+        session.tool_executor = [auto_confirm, base_executor](
+                const std::string& tool_name, const nlohmann::json& args) -> std::string {
+            if (auto_confirm) {
+                auto& perm = PermissionManager::GetInstance();
+                auto prev = perm.GetMode();
+                perm.SetMode("auto");
+                auto result = base_executor(tool_name, args);
+                perm.SetMode(prev);
+                return result;
+            }
+            return base_executor(tool_name, args);
+        };
+    }
+    // Per-session output callback: set after map insert (see below)
 
     // Inject memory consolidation service (singleton instance)
     session.consolidation_service = &MemoryConsolidationService::GetInstance();
@@ -277,34 +284,41 @@ std::string AgentSessionManager::CreateSession(const std::string& role_id,
     // 构建 system prompt
     session.system_prompt = BuildSystemPrompt(session);
 
-    sessions_[session_id] = std::move(session);
+    sessions_[session_id] = std::make_unique<AgentSession>(std::move(session));
+
+    // Set output_callback after map insert: raw pointer is now stable for the session's lifetime
+    {
+        AgentSession* raw = sessions_[session_id].get();
+        SessionOutputCallback global_cb = output_callback_;
+        raw->output_callback = [raw, global_cb](
+                const std::string& sid, const std::string& rid,
+                AgentRuntimeState state, const std::string& msg,
+                const std::optional<MessageSchema>& reply) {
+            if (global_cb) global_cb(sid, rid, state, msg, reply);
+        };
+    }
 
     LOG_DEBUG("Created session: {} for role: {} (task: {})",
              session_id, role_id, task_desc);
     LOG_DEBUG("  Role Memory: {}", role.memory_dir);
-    LOG_DEBUG("  Session History: {}", session.session_history_dir);
+    LOG_DEBUG("  Session History: {}", sessions_[session_id]->session_history_dir);
 
     return session_id;
 }
 
 std::string AgentSessionManager::SendToSession(const std::string& session_id,
                                                const std::string& message) {
-    AgentSession* session = GetSession(session_id);
+    auto session = GetSessionShared(session_id);
     if (!session) {
         throw std::runtime_error("Session not found: " + session_id);
     }
 
-    // 更新活跃时间
     session->last_active = SteadyClock::Now();
-
-    // 切换记忆上下文
-    SwitchMemoryContext(*session);
-
-    // 触发主动交互：监听用户消息
     ActiveInteractionManager::GetInstance().OnUserMessage(session_id, message);
-
-    // 根据 role 中的 enable_streaming 配置选择流式或非流式模式
-    AgentCore::Loop(message, *session);
+    {
+        std::lock_guard<std::mutex> lock(session->session_mutex);
+        AgentCore::Loop(message, *session);
+    }
 
     // 返回最后一条消息（assistant 回复）
     if (!session->messages.empty()) {
@@ -327,17 +341,11 @@ void AgentSessionManager::SendToSessionAsync(const std::string& session_id,
         return;
     }
 
-    // 更新活跃时间
     session->last_active = SteadyClock::Now();
-
-    // 切换记忆上下文
-    SwitchMemoryContext(*session);
-
-    // 触发主动交互：监听用户消息
     ActiveInteractionManager::GetInstance().OnUserMessage(session_id, message);
 
-    // 提交到线程池
     thread_pool_.Submit([this, session, message]() {
+        std::lock_guard<std::mutex> lock(session->session_mutex);
         try {
             AgentCore::Loop(message, *session);
         } catch (const std::exception& e) {
@@ -352,13 +360,15 @@ void AgentSessionManager::SendToSessionAsync(const std::string& session_id,
 }
 
 AgentSession* AgentSessionManager::GetSession(const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(session_id);
-    return it != sessions_.end() ? &it->second : nullptr;
+    return it != sessions_.end() ? it->second.get() : nullptr;
 }
 
 const AgentSession* AgentSessionManager::GetSession(const std::string& session_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(session_id);
-    return it != sessions_.end() ? &it->second : nullptr;
+    return it != sessions_.end() ? it->second.get() : nullptr;
 }
 
 std::shared_ptr<AgentSession> AgentSessionManager::GetSessionShared(const std::string& session_id) {
@@ -367,25 +377,28 @@ std::shared_ptr<AgentSession> AgentSessionManager::GetSessionShared(const std::s
     if (it == sessions_.end()) {
         return nullptr;
     }
-    // 返回 shared_ptr 但不删除对象（由 map 管理生命周期）
-    return std::shared_ptr<AgentSession>(&it->second, [](AgentSession*){});
+    // unique_ptr 管理对象生命周期，shared_ptr 用 no-op deleter 共享访问
+    // 安全：map rehash 只移动 unique_ptr，对象地址不变
+    return std::shared_ptr<AgentSession>(it->second.get(), [](AgentSession*){});
 }
 
 std::vector<AgentSession*> AgentSessionManager::GetSessionsByRole(const std::string& role_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<AgentSession*> result;
     for (auto& [id, session] : sessions_) {
-        if (session.role_id == role_id && session.is_active) {
-            result.push_back(&session);
+        if (session->role_id == role_id && session->is_active) {
+            result.push_back(session.get());
         }
     }
     return result;
 }
 
 std::vector<const AgentSession*> AgentSessionManager::GetSessionsByRole(const std::string& role_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<const AgentSession*> result;
     for (const auto& [id, session] : sessions_) {
-        if (session.role_id == role_id && session.is_active) {
-            result.push_back(&session);
+        if (session->role_id == role_id && session->is_active) {
+            result.push_back(session.get());
         }
     }
     return result;
@@ -397,8 +410,8 @@ std::vector<AgentSession*> AgentSessionManager::GetActiveSessions(int minutes) {
 
     std::vector<AgentSession*> result;
     for (auto& [id, session] : sessions_) {
-        if (session.is_active && (now - session.last_active) < threshold) {
-            result.push_back(&session);
+        if (session->is_active && (now - session->last_active) < threshold) {
+            result.push_back(session.get());
         }
     }
     return result;
@@ -409,15 +422,12 @@ void AgentSessionManager::CloseSession(const std::string& session_id) {
 
     auto it = sessions_.find(session_id);
     if (it != sessions_.end()) {
-        // 取消该会话的所有待处理主动交互任务
         ActiveInteractionManager::GetInstance().CancelSessionTasks(session_id);
 
-        // Perform exit consolidation using injected service
-        auto* consolidation_service = it->second.consolidation_service;
+        auto* consolidation_service = it->second->consolidation_service;
 
         if (consolidation_service) {
-            // Set up LLM callback for consolidation
-            auto llm_callback = [session = &it->second](const std::string& prompt) -> std::string {
+            auto llm_callback = [session = it->second.get()](const std::string& prompt) -> std::string {
                 ChatRequest req;
                 if (session->role) {
                     req.model = session->role->model;
@@ -431,8 +441,7 @@ void AgentSessionManager::CloseSession(const std::string& session_id) {
                 return session->provider->Chat(req).content_text;
             };
 
-            // Consolidate session exit (with explicit callback)
-            auto result = consolidation_service->ConsolidateSessionExit(it->second, llm_callback);
+            auto result = consolidation_service->ConsolidateSessionExit(*it->second, llm_callback);
 
             if (!result.summary.empty()) {
                 LOG_DEBUG("Session exit consolidation completed for {}: {} decisions saved",
@@ -440,8 +449,7 @@ void AgentSessionManager::CloseSession(const std::string& session_id) {
             }
         }
 
-        // Mark session as inactive
-        it->second.is_active = false;
+        it->second->is_active = false;
         LOG_INFO("Closed session: {}", session_id);
     }
 }
@@ -449,7 +457,7 @@ void AgentSessionManager::CloseSession(const std::string& session_id) {
 std::vector<std::string> AgentSessionManager::ListSessions() const {
     std::vector<std::string> session_ids;
     for (const auto& [id, session] : sessions_) {
-        if (session.is_active) {
+        if (session->is_active) {
             session_ids.push_back(id);
         }
     }
@@ -461,7 +469,7 @@ std::string AgentSessionManager::GetLastSessionId() const {
 
     std::string last_id;
     for (const auto& [id, session] : sessions_) {
-        if (session.is_active) {
+        if (session->is_active) {
             last_id = id;
         }
     }
@@ -522,20 +530,12 @@ void AgentSessionManager::SwitchRoleForSession(const std::string& session_id,
         throw std::runtime_error("Role not found: " + new_role_id);
     }
 
-    AgentSession& session = it->second;
+    AgentSession& session = *it->second;
 
-    // 切换角色
     session.role = &role_it->second;
     session.role_id = new_role_id;
-
-    // Session History 保持不变！✅ 项目上下文连续
-
-    // 更新角色信息和 provider
-    session.role_id = new_role_id;
-    session.role = &role_it->second;
     session.provider = ProviderRouter::GetInstance().GetProviderByName(session.role->provider_prot);
 
-    // 更新 base_url（从 provider 层级读取）
     {
         auto& config = ProsophorConfig::GetInstance();
         auto prov_it = config.providers.find(session.role->provider_prot);
@@ -544,31 +544,11 @@ void AgentSessionManager::SwitchRoleForSession(const std::string& session_id,
         }
     }
 
-    // 重新构建 system prompt（组合新的 Role Memory + 原有的 Session History）
     session.system_prompt = BuildSystemPrompt(session);
 
     LOG_INFO("Switched session {} to role: {}", session_id, new_role_id);
     LOG_INFO("  Role Memory (from new role): {}", session.role->memory_dir);
     LOG_INFO("  Session History (unchanged): {}", session.session_history_dir);
-}
-
-void AgentSessionManager::SwitchMemoryContext(const AgentSession& session) {
-    if (!memory_manager_) {
-        return;
-    }
-
-    // 优先使用 Session History（项目上下文连续）
-    if (!session.session_history_dir.empty()) {
-        memory_manager_->SetAgentWorkspace(session.session_history_dir);
-        LOG_DEBUG("Switched to Session History: {}", session.session_history_dir);
-        return;
-    }
-
-    // 降级使用 Role Memory（从 role 动态读取）
-    if (session.role && !session.role->memory_dir.empty()) {
-        memory_manager_->SetAgentWorkspace(session.role->memory_dir);
-        LOG_DEBUG("Switched to Role Memory: {}", session.role->memory_dir);
-    }
 }
 
 std::vector<SystemSchema> AgentSessionManager::BuildSystemPrompt(const AgentSession& session) {

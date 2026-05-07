@@ -61,9 +61,40 @@ AgentRuntimeState AgentStateNotifier::GetCurrentState() const {
 // AgentStateVisualizer Implementation
 // ============================================================================
 
+namespace {
+std::mutex         g_registry_mutex;
+std::unordered_map<std::string, std::unique_ptr<AgentStateVisualizer>> g_registry;
+}  // namespace
+
 AgentStateVisualizer& AgentStateVisualizer::GetInstance() {
     static AgentStateVisualizer instance;
     return instance;
+}
+
+AgentStateVisualizer& AgentStateVisualizer::GetOrCreate(const std::string& role_id) {
+    if (role_id.empty()) return GetInstance();
+    std::lock_guard<std::mutex> lock(g_registry_mutex);
+    auto it = g_registry.find(role_id);
+    if (it == g_registry.end()) {
+        auto viz = std::unique_ptr<AgentStateVisualizer>(new AgentStateVisualizer());
+        viz->Initialize();
+        it = g_registry.emplace(role_id, std::move(viz)).first;
+    }
+    return *it->second;
+}
+
+void AgentStateVisualizer::UpdateAll(float delta_time) {
+    std::lock_guard<std::mutex> lock(g_registry_mutex);
+    for (auto& [id, viz] : g_registry) {
+        viz->Update(delta_time);
+    }
+}
+
+void AgentStateVisualizer::RenderAll() {
+    std::lock_guard<std::mutex> lock(g_registry_mutex);
+    for (auto& [id, viz] : g_registry) {
+        viz->Render();
+    }
 }
 
 void AgentStateVisualizer::Initialize() {

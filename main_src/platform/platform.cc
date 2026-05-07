@@ -270,7 +270,8 @@ std::string SelectPlatformPath(const std::string& default_path, const std::strin
 bool CheckPortOpen(int port) {
     std::string url = "http://127.0.0.1:" + std::to_string(port);
     std::string result = RunShellCommand(
-        ("curl -s -o /dev/null -w \"%{http_code}\" --connect-timeout 2 " + url + " 2>/dev/null").c_str());
+        ("curl -s -o " + std::string(NullDevice()) + " -w \"%{http_code}\" --connect-timeout 2 "
+         + url + " 2>" + NullDevice()).c_str());
     return !result.empty();
 }
 
@@ -293,6 +294,14 @@ std::string RunShellCommand(const char* cmd) {
     pclose(fp);
 #endif
     return result;
+}
+
+const char* NullDevice() {
+#ifdef _WIN32
+    return "NUL";
+#else
+    return "/dev/null";
+#endif
 }
 
 Subprocess LaunchProcess(const std::vector<std::string>& args) {
@@ -383,57 +392,10 @@ Subprocess LaunchProcess(const std::vector<std::string>& args) {
 }
 
 int LaunchDetachedCommand(const std::string& command) {
-#ifdef _WIN32
-    STARTUPINFOA si{};
-    si.cb = sizeof(STARTUPINFOA);
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi{};
-
-    // Prepend MinGW bin to PATH so child can find runtime DLLs
-    char saved_path[32768] = {};
-    GetEnvironmentVariableA("PATH", saved_path, sizeof(saved_path));
-    bool found_mingw = false;
-
-    char module_path[MAX_PATH] = {};
-    if (GetModuleFileNameA(nullptr, module_path, sizeof(module_path))) {
-        auto p = std::filesystem::path(module_path).parent_path();
-        while (p.has_parent_path()) {
-            auto candidate = p / "mingw64" / "bin";
-            if (std::filesystem::exists(candidate)) {
-                SetEnvironmentVariableA("PATH", (candidate.string() + ";" + saved_path).c_str());
-                found_mingw = true;
-                break;
-            }
-            p = p.parent_path();
-        }
-    }
-    if (!found_mingw) {
-        char ml_buf[MAX_PATH] = {};
-        DWORD ml = GetEnvironmentVariableA("MINGW_PREFIX", ml_buf, sizeof(ml_buf));
-        if (ml > 0 && ml < MAX_PATH) {
-            SetEnvironmentVariableA("PATH", (std::string(ml_buf) + "/bin;" + saved_path).c_str());
-        }
-    }
-
-    if (!CreateProcessA(nullptr, const_cast<char*>(command.c_str()), nullptr, nullptr, FALSE,
-                        CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
-                        nullptr, nullptr, &si, &pi)) {
-        if (saved_path[0]) SetEnvironmentVariableA("PATH", saved_path);
-        return -1;
-    }
-
-    int pid = static_cast<int>(pi.dwProcessId);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    if (saved_path[0]) SetEnvironmentVariableA("PATH", saved_path);
-    return pid;
-#else
-    std::string cmd = command + " > /dev/null 2>&1 & echo $!";
-    std::string pid_str = RunShellCommand(cmd.c_str());
+    // Run command and capture PID (script must background and echo PID via "&; echo $!")
+    std::string pid_str = RunShellCommand(command.c_str());
     if (pid_str.empty()) return -1;
     return std::atoi(pid_str.c_str());
-#endif
 }
 
 bool IsProcessAlive(int pid) {

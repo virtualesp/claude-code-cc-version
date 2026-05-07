@@ -49,23 +49,15 @@ bool LocalModelManager::Start(const LocalModelConfig& config) {
 
     LOG_INFO("Starting llama-server: {} -> {}:{}", server_path, config.model_path, config.port);
 
+    std::string script = platform::HomeDir() + "/.prosophor/scripts/start_llamacpp_server.sh";
+
     std::ostringstream cmd;
-    cmd << platform::ShellEscape(server_path);
-    cmd << " -m " << platform::ShellEscape(config.model_path);
-    cmd << " --port " << config.port;
-    cmd << " --host 127.0.0.1";
-
-    if (config.n_gpu_layers > 0) {
-        cmd << " -ngl " << config.n_gpu_layers;
-    } else if (config.n_gpu_layers == -1) {
-        cmd << " -ngl 999";
-    }
-
-    if (config.n_threads > 0) {
-        cmd << " -t " << config.n_threads;
-    }
-
-    cmd << " -c 4096";
+    cmd << "bash " << platform::ShellEscape(script);
+    cmd << " " << platform::ShellEscape(server_path);
+    cmd << " " << platform::ShellEscape(config.model_path);
+    cmd << " " << config.port;
+    cmd << " " << config.n_gpu_layers;
+    cmd << " " << config.n_threads;
 
     int pid = platform::LaunchDetachedCommand(cmd.str());
     if (pid < 0) {
@@ -151,7 +143,8 @@ bool LocalModelManager::WaitForHealth(int port, int timeout_ms) const {
     while (std::chrono::steady_clock::now() < deadline) {
         // /health returns 503 while model loads, 200 when ready
         std::string result = platform::RunShellCommand(
-            ("curl -s -o /dev/null -w \"%{http_code}\" " + url + " 2>/dev/null").c_str());
+            ("curl -s -o " + std::string(platform::NullDevice()) + " -w \"%{http_code}\" "
+             + url + " 2>" + platform::NullDevice()).c_str());
         if (result == "200") {
             LOG_INFO("llama-server is ready");
             return true;

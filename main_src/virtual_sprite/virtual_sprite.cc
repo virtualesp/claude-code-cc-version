@@ -124,10 +124,12 @@ void VirtualSprite::Initialize() {
         }
     });
 
-    MediaCore::Instance().RegUpdateHandler([]() {
+    MediaCore::Instance().RegUpdateHandler([this]() {
         float dt = MediaCore::Instance().GetDeltaTimeS();
-        AgentStateVisualizer::GetInstance().Update(dt);
+        AgentStateVisualizer::GetInstance().Update(dt);   // default (single-role) instance
+        AgentStateVisualizer::UpdateAll(dt);              // all per-role instances
         GalgameScene::Instance().Update(dt);
+        DispatchSessionStates();
     });
 
     MediaCore::Instance().RegRenderHandler([this]() {
@@ -172,20 +174,45 @@ void VirtualSprite::Stop() {
 
 void VirtualSprite::RegisterAgentOutputCallback() {
     AgentEngine::GetInstance().SetOutputCallback(
-        [](AgentRuntimeState state, const std::string& state_msg,
-           const std::optional<MessageSchema>& reply) {
-            AgentStateVisualizer::GetInstance().SetAgentState(state, state_msg);
-            switch (state) {
-                case AgentRuntimeState::BEGINNING:
-                    UIRenderer::Instance().StartAssistantMessage();
-                    break;
-                case AgentRuntimeState::STREAM_CONTENT_TYPING:
-                    if (reply) UIRenderer::Instance().UpdateLastMessage(reply->text());
-                    break;
-                default:
-                    break;
-            }
+        [this](const std::string& session_id, const std::string& role_id,
+               AgentRuntimeState state, const std::string& state_msg,
+               const std::optional<MessageSchema>& reply) {
+            std::lock_guard<std::mutex> lock(session_states_mutex_);
+            auto& s = session_states_[session_id];
+            s.role_id     = role_id;
+            s.agent_state = state;
+            s.pending.push({session_id, role_id, state, state_msg, reply});
         });
+}
+
+void VirtualSprite::DispatchSessionStates() {
+    std::vector<SessionEvent> to_dispatch;
+    {
+        std::lock_guard<std::mutex> lock(session_states_mutex_);
+        for (auto& [sid, s] : session_states_) {
+            while (!s.pending.empty()) {
+                to_dispatch.push_back(std::move(s.pending.front()));
+                s.pending.pop();
+            }
+        }
+    }
+
+    for (const auto& ev : to_dispatch) {
+        // Route to the per-role visualizer — each character animates independently
+        auto& viz = AgentStateVisualizer::GetOrCreate(ev.role_id);
+        viz.SetAgentState(ev.state, ev.state_msg);
+
+        switch (ev.state) {
+            case AgentRuntimeState::BEGINNING:
+                UIRenderer::Instance().StartAssistantMessage();
+                break;
+            case AgentRuntimeState::STREAM_CONTENT_TYPING:
+                if (ev.reply) UIRenderer::Instance().UpdateLastMessage(ev.reply->text());
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 void VirtualSprite::RegisterMessageSubmitCallback() {
@@ -233,7 +260,8 @@ void VirtualSprite::RenderHome() {
 }
 
 void VirtualSprite::RenderVirtualHuman() {
-    AgentStateVisualizer::GetInstance().Render();
+    AgentStateVisualizer::GetInstance().Render();  // default single-role
+    AgentStateVisualizer::RenderAll();             // all per-role instances
     UIRenderer::Instance().Render();
     UIRenderer::Instance().RenderImGui();
 }
